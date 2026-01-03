@@ -1,0 +1,17 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model LiveSession {
+  id          String   @id @default(cuid())
+  type        String   // "DEBUG" or "PIXEL"
+  url         String   // The website URL
+  hostId      String   // The Clerk User ID
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}

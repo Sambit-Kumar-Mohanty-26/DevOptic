@@ -123,3 +123,23 @@
     @apply bg-background text-foreground;
   }
 }
+
+
+@keyframes spotlight {
+  0% { opacity: 0; transform: translate(-72%, -62%) scale(0.5); }
+  100% { opacity: 1; transform: translate(-50%,-40%) scale(1); }
+}
+.animate-spotlight {
+  animation: spotlight 2s ease .75s 1 forwards;
+}
+
+@keyframes shine {
+  0% { left: -150%; }
+  20% { left: 150%; } 
+  100% { left: 150%; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
