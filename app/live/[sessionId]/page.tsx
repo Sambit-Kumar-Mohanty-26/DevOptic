@@ -248,6 +248,7 @@ export default function LiveWorkspace({ params }: PageProps) {
         const obj = e.target;
         if (!obj.id) obj.id = crypto.randomUUID();
         if(obj.isRemote) return;
+        if(obj.excludeFromSocket) return; 
         emitObjectUpdate(obj);
     });
     
@@ -436,19 +437,23 @@ export default function LiveWorkspace({ params }: PageProps) {
       let shape: any = null;
       let isDown = false;
       let origX = 0; let origY = 0;
+      let activeShapeId: string | null = null; 
 
       canvas.on("mouse:down", (o) => {
         isDown = true;
         const pointer = canvas.getScenePoint(o.e);
         origX = pointer.x; origY = pointer.y;
         
+        //Generate the ID once on mouse down
+        activeShapeId = crypto.randomUUID();
+
         const commonProps = {
             left: origX, top: origY, 
             fill: 'transparent', 
             stroke: activeColor, 
             strokeWidth: brushSize,
             selectable: false,
-            id: crypto.randomUUID()
+            id: activeShapeId
         };
 
         if (activeTool === "rect") shape = new fabric.Rect({ ...commonProps, width: 0, height: 0 });
@@ -456,7 +461,10 @@ export default function LiveWorkspace({ params }: PageProps) {
         else if (activeTool === "triangle") shape = new fabric.Triangle({ ...commonProps, width: 0, height: 0 });
         else if (activeTool === "diamond") shape = new fabric.Rect({ ...commonProps, width: 0, height: 0, angle: 45, originX: 'center', originY: 'center' });
         
-        if (shape) canvas.add(shape);
+        if (shape) {
+            canvas.add(shape);
+            emitObjectUpdate(shape);
+        }
       });
 
       canvas.on("mouse:move", (o) => {
@@ -468,9 +476,41 @@ export default function LiveWorkspace({ params }: PageProps) {
                (shape as any).__isUpdating = true; 
                canvas.remove(shape);
             }
-            const x1 = origX, y1 = origY, x2 = pointer.x, y2 = pointer.y;
-            shape = new fabric.Path(`M ${x1} ${y1} L ${x2} ${y2}`, { fill: 'transparent', stroke: activeColor, strokeWidth: brushSize, selectable: false, id: crypto.randomUUID() });
+            const x1 = origX;
+            const y1 = origY;
+            const x2 = pointer.x;
+            const y2 = pointer.y;
+
+            // CALCULATE ARROW HEAD ANGLES
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            const headLen = 20; 
+
+            const x2_arrow = x2 - headLen * Math.cos(angle - Math.PI / 6);
+            const y2_arrow = y2 - headLen * Math.sin(angle - Math.PI / 6);
+            const x3_arrow = x2 - headLen * Math.cos(angle + Math.PI / 6);
+            const y3_arrow = y2 - headLen * Math.sin(angle + Math.PI / 6);
+
+            // DRAW LINE + ARROW HEAD PATH
+            const pathData = `M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${x2_arrow} ${y2_arrow} M ${x2} ${y2} L ${x3_arrow} ${y3_arrow}`;
+
+            shape = new fabric.Path(pathData, { 
+                fill: 'transparent', 
+                stroke: activeColor, 
+                strokeWidth: brushSize, 
+                strokeLineCap: 'round', 
+                strokeLineJoin: 'round', 
+                selectable: false, 
+                evented: false,
+                id: activeShapeId,
+                padding: 15,
+                excludeFromSocket: true 
+            });
+            
             canvas.add(shape);
+            
+            //Manually emit the update here for real-time arrow sync
+            throttledEmit(shape);
+        
         } else if (shape) {
             if (activeTool === "circle") {
                 const radius = Math.sqrt(Math.pow(pointer.x - origX, 2) + Math.pow(pointer.y - origY, 2)) / 2;
