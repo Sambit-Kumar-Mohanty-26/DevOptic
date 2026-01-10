@@ -114,6 +114,8 @@ export const HostPlayer = ({ sessionId, socket }: HostPlayerProps) => {
 
     useEffect(() => {
         if (!socket) return;
+        console.log("[HostPlayer] Requesting full snapshot...");
+        socket.emit("rrweb:request-snapshot", sessionId);
 
         const handleRrwebEvent = async (data: { event: string; timestamp: number }) => {
             try {

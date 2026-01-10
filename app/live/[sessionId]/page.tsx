@@ -11,6 +11,7 @@ import {
   Monitor, Eye, Video, VideoOff
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
+import { useAuth } from "@clerk/nextjs";
 import { toast } from "sonner";
 import * as fabric from "fabric";
 import { io, Socket } from "socket.io-client";
@@ -48,6 +49,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [hasControl, setHasControl] = useState(false); // Host has control over Guest
   const [controlGranted, setControlGranted] = useState(false); // Guest has granted control
+  const { getToken } = useAuth();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -83,11 +85,26 @@ export default function LiveWorkspace({ params }: PageProps) {
 
   // --- SOCKET HANDLING (RECEIVER) ---
   useEffect(() => {
-    const socket = io("http://localhost:3001");
-    socketRef.current = socket;
+    const initSocket = async () => {
+      try {
+        // 1. Get the Security Token from Clerk
+        const token = await getToken();
 
-    socket.emit("join-session", sessionId);
-    console.log(`[LOG] Connected to socket, joined ${sessionId}`);
+        // 2. Connect with the token
+        const socket = io("http://localhost:3001", {
+          auth: { token: token } // Pass token to server for verification
+        });
+        
+        socketRef.current = socket;
+
+        // 3. Handle Auth Errors
+        socket.on("connect_error", (err) => {
+          console.error("Socket connection failed:", err.message);
+          toast.error("Connection failed: Unauthorized");
+        });
+
+        socket.emit("join-session", sessionId);
+        console.log(`[LOG] Connected to socket, joined ${sessionId}`);
 
     // --- STREAMING EVENTS ---
 
@@ -213,11 +230,17 @@ export default function LiveWorkspace({ params }: PageProps) {
         fabricCanvas.current.requestRenderAll();
       }
     });
+  }catch (err) {
+        console.error("Failed to initialize socket:", err);
+  }
+};
+initSocket();
 
+    // Cleanup function
     return () => {
-      socket.disconnect();
+      socketRef.current?.disconnect();
     };
-  }, [sessionId]);
+  }, [sessionId, getToken]);
 
   // --- CANVAS INIT & SENDING LOGIC ---
 
@@ -816,7 +839,7 @@ export default function LiveWorkspace({ params }: PageProps) {
 
               {pixelSubMode === 'overlay' && role !== 'host' && (
                 <iframe key={`${targetUrl}-${refreshKey}`}
-                  src={`http://localhost:3001/api/proxy?url=${encodeURIComponent(targetUrl)}`}
+                  src={`/api/proxy?url=${encodeURIComponent(targetUrl)}`}
                   className="w-full h-full border-none absolute inset-0 z-10"
                   style={{ display: 'block' }} 
                   onLoad={() => setIsLoading(false)} />

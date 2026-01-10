@@ -171,12 +171,27 @@ export const ScreenShareGuest = ({
             }
         };
 
+        const handleStreamRequest = () => {
+             console.log("[ScreenShareGuest] Received stream request from late host");
+             // If we are currently sharing, re-send the existing offer
+             if (peerConnectionRef.current?.localDescription) {
+                 console.log("[ScreenShareGuest] Re-sending active offer");
+                 socket.emit("webrtc:offer", {
+                    sessionId,
+                    offer: peerConnectionRef.current.localDescription,
+                });
+             }
+        };
+
         socket.on("webrtc:answer", handleAnswer);
         socket.on("webrtc:ice-candidate", handleIceCandidate);
+        socket.on("webrtc:request-stream", handleStreamRequest);
+
 
         return () => {
             socket.off("webrtc:answer", handleAnswer);
             socket.off("webrtc:ice-candidate", handleIceCandidate);
+            socket.off("webrtc:request-stream", handleStreamRequest);
         };
     }, [socket]);
 

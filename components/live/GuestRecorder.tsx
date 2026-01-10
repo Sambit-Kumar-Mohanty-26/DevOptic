@@ -76,6 +76,15 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
             console.error("[GuestRecorder] Failed to start recording - stopFn is undefined");
         }
 
+        const handleSnapshotRequest = (data: { requestorId: string }) => {
+            console.log("[GuestRecorder] Received snapshot request from:", data.requestorId);
+            // This forces rrweb to create a 'Full Snapshot' event immediately.
+            // It will automatically pass through your existing 'emit' function defined above!
+            record.takeFullSnapshot(true); 
+        };
+
+        socket.on('rrweb:request-snapshot', handleSnapshotRequest);
+
         // --- CONSOLE OVERRIDE ---
         const originalLog = console.log;
         const originalWarn = console.warn;
@@ -143,6 +152,7 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
         return () => {
             // Cleanup on unmount
             console.log("[GuestRecorder] Stopping recording");
+            socket.off('rrweb:request-snapshot', handleSnapshotRequest);
             if (stopRecordingRef.current) {
                 stopRecordingRef.current();
                 stopRecordingRef.current = null;

@@ -12,6 +12,7 @@ interface ScreenShareHostProps {
 const rtcConfig: RTCConfiguration = {
     iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
     ],
 };
 
@@ -21,9 +22,6 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
     const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
     const [status, setStatus] = useState<"waiting" | "connecting" | "streaming">("waiting");
     const [resolution, setResolution] = useState({ width: 0, height: 0 });
-
-    // Local visual feedback state
-    const [clickFeedback, setClickFeedback] = useState<{ x: number, y: number } | null>(null);
 
     const cleanup = useCallback(() => {
         if (peerConnectionRef.current) {
@@ -37,7 +35,7 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
         setResolution({ width: 0, height: 0 });
     }, []);
 
-    const calculateVideoCoordinates = (e: React.MouseEvent) => {
+    const calculateVideoCoordinates = (e: React.MouseEvent | React.WheelEvent) => {
         const video = videoRef.current;
         if (!video || video.videoWidth === 0) return null;
 
@@ -77,11 +75,13 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
             x: sourceX,
             y: sourceY,
             displayX: e.clientX - rect.left,
-            displayY: e.clientY - rect.top
+            displayY: e.clientY - rect.top,
+            normalizedX: (xInVideo / renderWidth),
+            normalizedY: (yInVideo / renderHeight)
         };
     };
 
-    const sendCursorEvent = useCallback((type: string, x: number, y: number, button?: number) => {
+    const sendCursorEvent = useCallback((type: string, x: number, y: number, extra: any = {}) => {
         if (!socket || !hasControl || !videoRef.current) return;
 
         const video = videoRef.current;
@@ -91,11 +91,11 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
             type,
             x,
             y,
-            button,
             normalizedX: x / video.videoWidth,
             normalizedY: y / video.videoHeight,
             streamWidth: video.videoWidth,
             streamHeight: video.videoHeight,
+            ...extra
         };
         socket.emit("control:cursor", data);
     }, [socket, sessionId, hasControl]);
@@ -106,9 +106,8 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
 
         const coords = calculateVideoCoordinates(e);
         if (coords) {
-            setClickFeedback({ x: coords.displayX, y: coords.displayY });
-            setTimeout(() => setClickFeedback(null), 500);
-            sendCursorEvent("click", coords.x, coords.y, e.button);
+            // REMOVED LOCAL FEEDBACK HERE to prevent double-click visual
+            sendCursorEvent("click", coords.x, coords.y, { button: e.button });
         }
     }, [hasControl, sendCursorEvent]);
 
@@ -122,16 +121,27 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
 
     const handleScroll = useCallback((e: React.WheelEvent) => {
         if (!hasControl || !socket) return;
-        socket.emit("control:cursor", {
-            sessionId,
-            type: "scroll",
-            deltaX: e.deltaX,
-            deltaY: e.deltaY,
-        });
-    }, [hasControl, socket, sessionId]);
+        
+        e.preventDefault();
+        e.stopPropagation();
+
+        const coords = calculateVideoCoordinates(e);
+
+        if (coords) {
+            sendCursorEvent("scroll", coords.x, coords.y, {
+                deltaX: e.deltaX,
+                deltaY: e.deltaY,
+            });
+        }
+    }, [hasControl, socket, sessionId, sendCursorEvent]);
 
     useEffect(() => {
         if (!socket) return;
+        
+        // Request the stream immediately in case Host joins late
+        console.log("[ScreenShareHost] Asking for stream...");
+        socket.emit("webrtc:request-stream", { sessionId });
+
         const handleOffer = async (data: { offer: RTCSessionDescriptionInit }) => {
             console.log("[ScreenShareHost] Received offer");
             setStatus("connecting");
@@ -192,31 +202,6 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
             ref={containerRef}
             className={`w-full h-full relative bg-slate-900 overflow-hidden rounded-2xl border ${hasControl ? 'border-violet-500/50 shadow-[0_0_20px_rgba(139,92,246,0.3)]' : 'border-white/10'}`}
         >
-            {/* Click Feedback Ripple */}
-            {clickFeedback && (
-                <div
-                    style={{
-                        position: 'absolute',
-                        left: clickFeedback.x - 20,
-                        top: clickFeedback.y - 20,
-                        width: 40,
-                        height: 40,
-                        borderRadius: '50%',
-                        background: 'rgba(255, 255, 255, 0.5)',
-                        border: '2px solid rgba(139, 92, 246, 0.8)',
-                        zIndex: 50,
-                        pointerEvents: 'none',
-                        animation: 'host-ping 0.4s ease-out forwards'
-                    }}
-                />
-            )}
-            <style jsx>{`
-                @keyframes host-ping {
-                    0% { transform: scale(0.5); opacity: 1; }
-                    100% { transform: scale(2); opacity: 0; }
-                }
-            `}</style>
-
             {/* Status Overlay */}
             <div className="absolute top-4 left-4 z-20 flex items-center gap-3 bg-slate-900/90 backdrop-blur-xl px-4 py-2 rounded-full border border-white/10">
                 <div className={`w-2 h-2 rounded-full ${status === "streaming" ? "bg-red-500 animate-pulse" : "bg-slate-600"}`} />
@@ -245,7 +230,7 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
                 autoPlay
                 playsInline
                 muted
-                className={`w-full h-full object-contain ${hasControl ? 'cursor-pointer' : ''}`}
+                className={`w-full h-full object-contain ${hasControl ? 'cursor-none' : ''}`}
                 style={{ opacity: status === "streaming" ? 1 : 0 }}
                 onClick={handleClick}
                 onMouseMove={hasControl ? handleMouseMove : undefined}

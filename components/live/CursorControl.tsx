@@ -49,9 +49,6 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
 
             // Check if click is within iframe bounds
             if (iframeX >= 0 && iframeY >= 0 && iframeX <= rect.width && iframeY <= rect.height) {
-                console.log("[CursorControl] Sending to iframe via BroadcastChannel:", action, Math.round(iframeX), Math.round(iframeY));
-
-                // Use BroadcastChannel (works cross-origin within same browser)
                 broadcastChannelRef.current?.postMessage({
                     action,
                     x: iframeX,
@@ -59,14 +56,12 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
                     ...extra
                 });
 
-                // Also try postMessage as fallback
                 try {
                     iframe.contentWindow?.postMessage({
                         type: 'DEVOPTIC_CURSOR',
                         payload: { action, x: iframeX, y: iframeY, ...extra }
                     }, '*');
                 } catch (err) {
-                    // Cross-origin blocked - BroadcastChannel should work
                 }
             }
         });
@@ -78,13 +73,11 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
         y = Math.max(0, Math.min(y, window.innerHeight - 1));
 
         // Show visual click feedback
-        setRemoteCursor({ x, y, clicking: true });
+        setRemoteCursor(prev => prev ? { ...prev, x, y, clicking: true } : { x, y, clicking: true });
         setTimeout(() => setRemoteCursor(prev => prev ? { ...prev, clicking: false } : null), 200);
 
         const element = document.elementFromPoint(x, y) as HTMLElement;
         if (!element) return;
-
-        console.log("[CursorControl] Click on:", element.tagName);
 
         // For iframes, send via BroadcastChannel with CORRECT coordinates
         if (element.tagName === 'IFRAME') {
@@ -126,8 +119,6 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
             return;
         }
 
-        console.log("[CursorControl] Active");
-
         const handleCursorEvent = (data: CursorEvent) => {
             let x: number, y: number;
 
@@ -142,8 +133,7 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
                 y = data.y || 0;
             }
 
-            // Update cursor position
-            if (data.type === "move" || data.type === "click") {
+            if (data.type === "move" || data.type === "click" || data.type === "scroll") {
                 setRemoteCursor(prev => ({
                     x,
                     y,
@@ -179,18 +169,19 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
                 top: remoteCursor.y,
                 pointerEvents: 'none',
                 zIndex: 99999,
-                transform: 'translate(-2px, -2px)',
+                transform: 'translate(-5px, -3px)',
+                transition: 'top 0.05s linear, left 0.05s linear'
             }}
         >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
-                style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))', transform: remoteCursor.clicking ? 'scale(0.9)' : 'scale(1)', transition: 'transform 0.1s' }}>
+                style={{ 
+                    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))', 
+                    transform: remoteCursor.clicking ? 'scale(0.8)' : 'scale(1)', 
+                    transition: 'transform 0.1s' 
+                }}>
                 <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.86a.5.5 0 0 0-.85.35Z" fill="#8B5CF6" stroke="#fff" strokeWidth="1.5" />
             </svg>
-            {remoteCursor.clicking && (
-                <div style={{ position: 'absolute', width: 40, height: 40, borderRadius: '50%', background: 'rgba(139, 92, 246, 0.4)', top: -8, left: -8, animation: 'ping 0.3s ease-out forwards' }} />
-            )}
-            <span style={{ position: 'absolute', left: 20, top: 8, background: '#8B5CF6', color: 'white', padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 'bold' }}>HOST</span>
-            <style>{`@keyframes ping { 0% { transform: scale(0.5); opacity: 1; } 100% { transform: scale(2); opacity: 0; } }`}</style>
+            <span style={{ position: 'absolute', left: 16, top: 12, background: '#8B5CF6', color: 'white', padding: '1px 4px', borderRadius: 3, fontSize: 9, fontWeight: 'bold' }}>HOST</span>
         </div>
     );
 };

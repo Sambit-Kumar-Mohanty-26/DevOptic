@@ -2,10 +2,19 @@
 import { UserButton, useUser } from "@clerk/nextjs";
 import { BackgroundBeams } from "@/components/ui/BackgroundBeams";
 import { BorderCard } from "@/components/ui/BorderCard";
-import { Plus, Activity, Github } from "lucide-react";
+import { Plus, Activity, Github, Loader2 } from "lucide-react";
+import { createSession } from "@/app/actions";
+import { useTransition } from "react";
 
 export default function Dashboard() {
   const { user } = useUser();
+  const [isPending, startTransition] = useTransition();
+
+  const handleCreate = () => {
+    startTransition(async () => {
+      await createSession();
+    });
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-white relative overflow-hidden">
@@ -19,15 +28,19 @@ export default function Dashboard() {
       </nav>
 
       <main className="relative z-10 max-w-7xl mx-auto px-6 py-12">
-
         <div className="flex justify-between items-end mb-12">
             <div>
                 <h1 className="text-4xl font-bold mb-2">Command Center</h1>
                 <p className="text-slate-400 font-mono text-sm">USER: {user?.firstName?.toUpperCase()}</p>
             </div>
             
-            <button className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-3 rounded-full font-bold shadow-[0_0_20px_rgba(8,145,178,0.5)] transition-all hover:scale-105">
-                <Plus size={18} /> INITIALIZE_SESSION
+            <button 
+                onClick={handleCreate}
+                disabled={isPending}
+                className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white px-6 py-3 rounded-full font-bold shadow-[0_0_20px_rgba(8,145,178,0.5)] transition-all hover:scale-105"
+            >
+                {isPending ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />} 
+                {isPending ? "INITIALIZING..." : "INITIALIZE_SESSION"}
             </button>
         </div>
 
