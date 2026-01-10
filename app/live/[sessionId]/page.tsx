@@ -91,8 +91,12 @@ export default function LiveWorkspace({ params }: PageProps) {
         const token = await getToken();
 
         // 2. Connect with the token
-        const socket = io("http://localhost:3001", {
-          auth: { token: token } // Pass token to server for verification
+        const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
+
+        const socket = io(socketUrl, {
+            auth: {
+              token: token
+            }
         });
         
         socketRef.current = socket;
