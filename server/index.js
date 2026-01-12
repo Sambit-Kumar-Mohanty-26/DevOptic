@@ -31,10 +31,10 @@ io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error("Authentication error: No token provided"));
   const decoded = jwt.decode(token, { complete: true });
-  
+
   if (!decoded || !decoded.payload || !decoded.payload.iss) {
-      console.error("Auth Failed: Could not decode token issuer");
-      return next(new Error("Authentication error: Malformed token"));
+    console.error("Auth Failed: Could not decode token issuer");
+    return next(new Error("Authentication error: Malformed token"));
   }
 
   const client = jwksClient({
@@ -44,7 +44,7 @@ io.use((socket, next) => {
   });
 
   const getKey = (header, callback) => {
-    client.getSigningKey(header.kid, function(err, key) {
+    client.getSigningKey(header.kid, function (err, key) {
       if (err) {
         console.error("JWKS Fetch Error:", err.message);
         return callback(err);
@@ -56,8 +56,8 @@ io.use((socket, next) => {
 
   jwt.verify(token, getKey, { algorithms: ['RS256'] }, (err, verifiedDecoded) => {
     if (err) {
-        console.error("Token Verification Failed:", err.message);
-        return next(new Error("Authentication error: Invalid token"));
+      console.error("Token Verification Failed:", err.message);
+      return next(new Error("Authentication error: Invalid token"));
     }
     socket.user = verifiedDecoded;
     next();
@@ -80,7 +80,7 @@ io.on('connection', (socket) => {
   socket.on('cursor:down', relay('cursor:down'));
   socket.on('cursor:move', relay('cursor:move'));
   socket.on('cursor:up', relay('cursor:up'));
-  
+
   socket.on('draw:add', relayObj('draw:add'));
   socket.on('draw:remove', relayId('draw:remove'));
   socket.on('canvas:clear', (sessionId) => socket.to(sessionId).emit('canvas:clear'));
@@ -121,6 +121,10 @@ io.on('connection', (socket) => {
   socket.on('control:deny', relay('control:deny'));
   socket.on('control:revoke', relay('control:revoke'));
   socket.on('control:cursor', relay('control:cursor'));
+
+  // --- MAGIC BRUSH SYNC ---
+  socket.on('magic:highlight', relay('magic:highlight'));
+  socket.on('magic:clear', relay('magic:clear'));
 
   socket.on('disconnect', () => console.log('User disconnected:', socket.id));
 });

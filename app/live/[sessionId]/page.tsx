@@ -94,11 +94,10 @@ export default function LiveWorkspace({ params }: PageProps) {
         const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
 
         const socket = io(socketUrl, {
-            auth: {
-              token: token
-            }
+          auth: {
+            token: token
+          }
         });
-        
         socketRef.current = socket;
 
         // 3. Handle Auth Errors
@@ -110,135 +109,178 @@ export default function LiveWorkspace({ params }: PageProps) {
         socket.emit("join-session", sessionId);
         console.log(`[LOG] Connected to socket, joined ${sessionId}`);
 
-    // --- STREAMING EVENTS ---
 
-    socket.on("cursor:down", ({ id, color, size, x, y }) => {
-      const canvas = fabricCanvas.current;
-      if (!canvas) return;
-      const w = canvas.width || 1;
-      const h = canvas.height || 1;
+        socket.on("cursor:down", ({ id, color, size, x, y }) => {
+          const canvas = fabricCanvas.current;
+          if (!canvas) return;
+          const w = canvas.width || 1;
+          const h = canvas.height || 1;
 
-      const path = new fabric.Path(`M ${x * w} ${y * h}`, {
-        stroke: color,
-        strokeWidth: size,
-        fill: null,
-        strokeLineCap: 'round',
-        strokeLineJoin: 'round',
-        selectable: false,
-        evented: false,
-        objectCaching: false,
-      });
-
-      (path as any).id = id;
-      (path as any).isRemote = true;
-      (path as any).isStreaming = true;
-
-      remoteRef.current[id] = path;
-      canvas.add(path);
-      // canvas.requestRenderAll(); // wait for first move
-    });
-
-    socket.on("cursor:move", ({ id, x, y }) => {
-      const canvas = fabricCanvas.current;
-      const pathObj = remoteRef.current[id];
-      if (!canvas || !pathObj) return;
-
-      const w = canvas.width || 1;
-      const h = canvas.height || 1;
-
-      const newPoint = ['L', x * w, y * h];
-      (pathObj.path as any[]).push(newPoint);
-
-      pathObj.set({ dirty: true });
-      canvas.requestRenderAll();
-    });
-
-    socket.on("cursor:up", ({ id }) => {
-      const canvas = fabricCanvas.current;
-      const dirtyPath = remoteRef.current[id];
-      if (canvas && dirtyPath) {
-        // Replace dirty stream path with clean stable path
-        const cleanPath = stabilizePath(canvas, dirtyPath);
-        (cleanPath as any).isRemote = true;
-
-        canvas.add(cleanPath);
-        cleanPath.setCoords();
-
-        delete remoteRef.current[id];
-        canvas.requestRenderAll();
-      }
-    });
-
-    // --- STATIC OBJECT EVENTS ---
-
-    socket.on("draw:add", (objData: any) => {
-      const canvas = fabricCanvas.current;
-      if (!canvas) return;
-
-      const w = canvas.width || 1;
-      const h = canvas.height || 1;
-      const options = { ...objData };
-
-      if (options.left !== undefined) options.left = options.left * w;
-      if (options.top !== undefined) options.top = options.top * h;
-
-      const existingObj = canvas.getObjects().find((o: any) => (o as any).id === options.id);
-
-      if (existingObj) {
-        // If we have a local stabilized path (from cursor:up), it might already be perfect.
-        // We simply ensure properties are synced.
-        const { type, ...safeOptions } = options;
-        if (existingObj.type === 'path') {
-          // We only update if the server version is significantly different 
-          // or if it wasn't the result of our own streaming
-          (existingObj as any).path = safeOptions.path;
-          if (safeOptions.pathOffset) (existingObj as any).pathOffset = safeOptions.pathOffset;
-        }
-        existingObj.set(safeOptions);
-        existingObj.setCoords();
-      } else {
-        if (options.type === 'path') {
-          const newPath = new fabric.Path(options.path, options);
-          (newPath as any).isRemote = true;
-          (newPath as any).id = options.id;
-          canvas.add(newPath);
-        } else {
-          fabric.util.enlivenObjects([options]).then((enlivenedObjects: any[]) => {
-            enlivenedObjects.forEach((obj) => {
-              (obj as any).isRemote = true;
-              (obj as any).id = options.id;
-              canvas.add(obj);
-            });
-            canvas.requestRenderAll();
+          const path = new fabric.Path(`M ${x * w} ${y * h}`, {
+            stroke: color,
+            strokeWidth: size,
+            fill: null,
+            strokeLineCap: 'round',
+            strokeLineJoin: 'round',
+            selectable: false,
+            evented: false,
+            objectCaching: false,
           });
-        }
-      }
-      canvas.requestRenderAll();
-    });
 
-    socket.on("draw:remove", (objectId: string) => {
-      const canvas = fabricCanvas.current;
-      if (!canvas) return;
-      const objToRemove = canvas.getObjects().find((o: any) => (o as any).id === objectId);
-      if (objToRemove) {
-        (objToRemove as any).isRemote = true;
-        canvas.remove(objToRemove);
-        canvas.requestRenderAll();
-      }
-    });
+          (path as any).id = id;
+          (path as any).isRemote = true;
+          (path as any).isStreaming = true;
 
-    socket.on("canvas:clear", () => {
-      if (fabricCanvas.current) {
-        fabricCanvas.current.clear();
-        fabricCanvas.current.backgroundColor = "transparent";
-        fabricCanvas.current.requestRenderAll();
-      }
-    });
-  }catch (err) {
+          remoteRef.current[id] = path;
+          canvas.add(path);
+          // canvas.requestRenderAll(); // wait for first move
+        });
+
+        socket.on("cursor:move", ({ id, x, y }) => {
+          const canvas = fabricCanvas.current;
+          const pathObj = remoteRef.current[id];
+          if (!canvas || !pathObj) return;
+
+          const w = canvas.width || 1;
+          const h = canvas.height || 1;
+
+          const newPoint = ['L', x * w, y * h];
+          (pathObj.path as any[]).push(newPoint);
+
+          pathObj.set({ dirty: true });
+          canvas.requestRenderAll();
+        });
+
+        socket.on("cursor:up", ({ id }) => {
+          const canvas = fabricCanvas.current;
+          const dirtyPath = remoteRef.current[id];
+          if (canvas && dirtyPath) {
+            // Replace dirty stream path with clean stable path
+            const cleanPath = stabilizePath(canvas, dirtyPath);
+            (cleanPath as any).isRemote = true;
+
+            canvas.add(cleanPath);
+            cleanPath.setCoords();
+
+            delete remoteRef.current[id];
+            canvas.requestRenderAll();
+          }
+        });
+
+        // --- STATIC OBJECT EVENTS ---
+
+        socket.on("draw:add", (objData: any) => {
+          const canvas = fabricCanvas.current;
+          if (!canvas) return;
+
+          const w = canvas.width || 1;
+          const h = canvas.height || 1;
+          const options = { ...objData };
+
+          if (options.left !== undefined) options.left = options.left * w;
+          if (options.top !== undefined) options.top = options.top * h;
+
+          const existingObj = canvas.getObjects().find((o: any) => (o as any).id === options.id);
+
+          if (existingObj) {
+            // If we have a local stabilized path (from cursor:up), it might already be perfect.
+            // We simply ensure properties are synced.
+            const { type, ...safeOptions } = options;
+            if (existingObj.type === 'path') {
+              // We only update if the server version is significantly different 
+              // or if it wasn't the result of our own streaming
+              (existingObj as any).path = safeOptions.path;
+              if (safeOptions.pathOffset) (existingObj as any).pathOffset = safeOptions.pathOffset;
+            }
+            existingObj.set(safeOptions);
+            existingObj.setCoords();
+          } else {
+            if (options.type === 'path') {
+              const newPath = new fabric.Path(options.path, options);
+              (newPath as any).isRemote = true;
+              (newPath as any).id = options.id;
+              canvas.add(newPath);
+            } else {
+              fabric.util.enlivenObjects([options]).then((enlivenedObjects: any[]) => {
+                enlivenedObjects.forEach((obj) => {
+                  (obj as any).isRemote = true;
+                  (obj as any).id = options.id;
+                  canvas.add(obj);
+                });
+                canvas.requestRenderAll();
+              });
+            }
+          }
+          canvas.requestRenderAll();
+        });
+
+        socket.on("draw:remove", (objectId: string) => {
+          const canvas = fabricCanvas.current;
+          if (!canvas) return;
+          const objToRemove = canvas.getObjects().find((o: any) => (o as any).id === objectId);
+          if (objToRemove) {
+            (objToRemove as any).isRemote = true;
+            canvas.remove(objToRemove);
+            canvas.requestRenderAll();
+          }
+        });
+
+        socket.on("canvas:clear", () => {
+          if (fabricCanvas.current) {
+            fabricCanvas.current.clear();
+            fabricCanvas.current.backgroundColor = "transparent";
+            fabricCanvas.current.requestRenderAll();
+          }
+        });
+
+        // --- MAGIC BRUSH SYNC ---
+        socket.on("magic:highlight", (data: { rect: any; userId: string }) => {
+          const canvas = fabricCanvas.current;
+          if (!canvas) return;
+          canvas.calcOffset();
+          canvas.getObjects().forEach((obj: any) => {
+            if (obj.id === `magic-highlight-${data.userId}`) canvas.remove(obj);
+          });
+          const strokeWidth = 2;
+          const cvsW = canvas.width || 1;
+          const cvsH = canvas.height || 1;
+
+          const remoteHighlight = new fabric.Rect({
+            left: data.rect.left * cvsW,
+            top: data.rect.top * cvsH,
+            width: data.rect.width * cvsW,
+            height: data.rect.height * cvsH,
+            fill: 'rgba(168, 85, 247, 0.1)',
+            stroke: '#a855f7',
+            strokeWidth: strokeWidth,
+            strokeUniform: true,
+            selectable: false,
+            evented: false,
+            // @ts-ignore
+            id: `magic-highlight-${data.userId}`,
+            objectCaching: false,
+            originX: 'left',
+            originY: 'top'
+          });
+          (remoteHighlight as any).id = `magic-highlight-${data.userId}`;
+          (remoteHighlight as any).isRemote = true;
+          canvas.add(remoteHighlight);
+          canvas.requestRenderAll();
+        });
+
+        socket.on("magic:clear", (data: { userId: string }) => {
+          const canvas = fabricCanvas.current;
+          if (!canvas) return;
+          canvas.getObjects().forEach((obj: any) => {
+            if (obj.id === `magic-highlight-${data.userId}`) canvas.remove(obj);
+          });
+          canvas.requestRenderAll();
+        });
+      } catch (err) {
         console.error("Failed to initialize socket:", err);
-  }
-};
-initSocket();
+      }
+    };
+    initSocket();
 
     // Cleanup function
     return () => {
@@ -312,12 +354,12 @@ initSocket();
       for (const entry of entries) {
         // Use contentBoxSize for precision
         if (entry.contentBoxSize) {
-           const { inlineSize, blockSize } = entry.contentBoxSize[0];
-           canvas.setDimensions({ width: inlineSize, height: blockSize });
+          const { inlineSize, blockSize } = entry.contentBoxSize[0];
+          canvas.setDimensions({ width: inlineSize, height: blockSize });
         } else {
-           // Fallback
-           const { width, height } = entry.contentRect;
-           canvas.setDimensions({ width, height });
+          // Fallback
+          const { width, height } = entry.contentRect;
+          canvas.setDimensions({ width, height });
         }
         canvas.calcOffset();
         canvas.renderAll();
@@ -610,8 +652,8 @@ initSocket();
     const handleIframeMessage = (event: MessageEvent) => {
       // 1. Strict Filters
       if (
-        event.data?.type !== 'DEVOPTIC_HOVER' || 
-        activeTool !== 'magic' || 
+        event.data?.type !== 'DEVOPTIC_HOVER' ||
+        activeTool !== 'magic' ||
         pixelSubMode !== 'overlay'
       ) return;
 
@@ -625,8 +667,8 @@ initSocket();
       canvas.calcOffset();
 
       // 3. Remove old highlight
-      canvas.getObjects().forEach((obj: any) => { 
-        if (obj.id === 'magic-highlight') canvas.remove(obj); 
+      canvas.getObjects().forEach((obj: any) => {
+        if (obj.id === 'magic-highlight') canvas.remove(obj);
       });
 
       // 4. Draw Precise Box
@@ -654,11 +696,45 @@ initSocket();
 
       canvas.add(highlight);
       canvas.requestRenderAll();
+
+      // 5. Emit PERCENTAGE coordinates
+      // This ensures that if the guest has a different window width (responsive layout),
+      // the highlight stays relative to the element's position on *their* screen.
+      const cvsW = canvas.width || 1;
+      const cvsH = canvas.height || 1;
+
+      socketRef.current?.emit('magic:highlight', {
+        sessionId,
+        rect: {
+          left: (rect.left - offset) / cvsW,
+          top: (rect.top - offset) / cvsH,
+          width: (rect.width + strokeWidth - 1) / cvsW,
+          height: (rect.height + strokeWidth - 1) / cvsH,
+        },
+        userId: socketRef.current?.id
+      });
     };
-    
+
     window.addEventListener('message', handleIframeMessage);
-    return () => window.removeEventListener('message', handleIframeMessage);
-  }, [activeTool, pixelSubMode]);
+    return () => {
+      window.removeEventListener('message', handleIframeMessage);
+      // Clean up local highlight when switching away from magic tool
+      const canvas = fabricCanvas.current;
+      if (canvas) {
+        canvas.getObjects().forEach((obj: any) => {
+          if (obj.id === 'magic-highlight') canvas.remove(obj);
+        });
+        canvas.requestRenderAll();
+      }
+      // Emit clear to other users
+      if (socketRef.current?.id) {
+        socketRef.current?.emit('magic:clear', {
+          sessionId,
+          userId: socketRef.current.id
+        });
+      }
+    };
+  }, [activeTool, pixelSubMode, sessionId]);
 
   const copyInvite = () => {
     navigator.clipboard.writeText(window.location.href);
@@ -845,7 +921,7 @@ initSocket();
                 <iframe key={`${targetUrl}-${refreshKey}`}
                   src={`/api/proxy?url=${encodeURIComponent(targetUrl)}`}
                   className="w-full h-full border-none absolute inset-0 z-10"
-                  style={{ display: 'block' }} 
+                  style={{ display: 'block' }}
                   onLoad={() => setIsLoading(false)} />
               )}
 
