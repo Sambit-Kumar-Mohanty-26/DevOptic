@@ -276,6 +276,28 @@ export default function LiveWorkspace({ params }: PageProps) {
           });
           canvas.requestRenderAll();
         });
+
+        // --- PIXEL SCROLL SYNC ---
+        socket.on('pixel:scroll', (data: { percentX: number; percentY: number; selector?: string; userId: string }) => {
+          // Don't scroll if it's our own event
+          if (data.userId === socket.id) return;
+
+          console.log('[DevOptic] Client Executing Scroll:', data.percentY, data.selector); // LOG CLIENT EXECUTE
+
+          // Send to iframe to execute scroll
+          const iframe = document.querySelector('iframe');
+          if (iframe && iframe.contentWindow) {
+            iframe.contentWindow.postMessage({
+              type: 'DEVOPTIC_CURSOR',
+              payload: {
+                action: 'scroll-percent',
+                percentX: data.percentX,
+                percentY: data.percentY,
+                selector: data.selector
+              }
+            }, '*');
+          }
+        });
       } catch (err) {
         console.error("Failed to initialize socket:", err);
       }
@@ -736,6 +758,33 @@ export default function LiveWorkspace({ params }: PageProps) {
     };
   }, [activeTool, pixelSubMode, sessionId]);
 
+  // --- SCROLL SYNC HANDLER ---
+  useEffect(() => {
+    const handleScrollMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'DEVOPTIC_SCROLL') return;
+
+      const { percentX, percentY, selector } = event.data.payload;
+      console.log('[DevOptic] Client Received Message:', percentY, selector); // LOG CLIENT RECEIVE
+
+      // Emit to other users
+      socketRef.current?.emit('pixel:scroll', {
+        sessionId,
+        percentX,
+        percentY,
+        selector, // Send selector
+        userId: socketRef.current?.id
+      });
+    };
+
+    window.addEventListener('message', handleScrollMessage);
+
+
+
+    return () => {
+      window.removeEventListener('message', handleScrollMessage);
+    };
+  }, [sessionId]);
+
   const copyInvite = () => {
     navigator.clipboard.writeText(window.location.href);
     setCopied(true);
@@ -908,16 +957,17 @@ export default function LiveWorkspace({ params }: PageProps) {
 
             <div className="flex-1 relative overflow-hidden" ref={containerRef}
               style={{
-                backgroundColor: pixelSubMode === 'whiteboard' ? '#ffffff' : 'transparent',
-                backgroundImage: pixelSubMode === 'whiteboard' ? 'radial-gradient(#cbd5e1 1px, transparent 1px)' : 'none',
+                // Fix for White Screen Bug: Only apply white background when explicitly in whiteboard mode
+                backgroundColor: pixelSubMode === 'whiteboard' && mode === 'pixel' ? '#ffffff' : 'transparent',
+                backgroundImage: pixelSubMode === 'whiteboard' && mode === 'pixel' ? 'radial-gradient(#cbd5e1 1px, transparent 1px)' : 'none',
                 backgroundSize: '20px 20px',
               }}>
 
-              <div className={`absolute inset-0 z-20 ${mode === "pixel" && activeTool !== 'magic' ? "pointer-events-auto" : "pointer-events-none"}`}>
+              <div className={`absolute inset-0 z-20 ${mode === "pixel" && activeTool !== 'magic' && activeTool !== 'select' ? "pointer-events-auto" : "pointer-events-none"}`}>
                 <canvas ref={canvasRef} />
               </div>
 
-              {pixelSubMode === 'overlay' && role !== 'host' && (
+              {(pixelSubMode === 'overlay' || mode === 'debug') && (
                 <iframe key={`${targetUrl}-${refreshKey}`}
                   src={`/api/proxy?url=${encodeURIComponent(targetUrl)}`}
                   className="w-full h-full border-none absolute inset-0 z-10"
@@ -926,7 +976,8 @@ export default function LiveWorkspace({ params }: PageProps) {
               )}
 
               {/* WebRTC Screen Share for Host - real-time video stream */}
-              {role === 'host' && (
+              {/* WebRTC Screen Share for Host - real-time video stream (Debug Mode only) */}
+              {role === 'host' && mode === 'debug' && (
                 <div className="absolute inset-0 z-10">
                   <ScreenShareHost sessionId={sessionId} socket={socketRef.current} hasControl={hasControl} />
                 </div>

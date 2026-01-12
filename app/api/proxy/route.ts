@@ -4,7 +4,7 @@ import * as cheerio from "cheerio";
 // @ts-ignore
 import ssrfFilter from "ssrf-req-filter";
 
-export const runtime = 'nodejs'; 
+export const runtime = 'nodejs';
 
 // --- INJECTED SCRIPT GENERATOR ---
 const getInjectedScript = (socketUrl: string) => `
@@ -99,6 +99,15 @@ const getInjectedScript = (socketUrl: string) => `
            var p = event.data.payload;
            if (p.action === 'click') handleClick(p.x, p.y, p.button);
            if (p.action === 'scroll') handleScroll(p.deltaX, p.deltaY);
+           if (p.action === 'scroll-percent') {
+              var docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+              var docWidth = document.documentElement.scrollWidth - document.documentElement.clientWidth;
+              window.scrollTo({
+                left: p.percentX * docWidth,
+                top: p.percentY * docHeight,
+                behavior: 'auto'
+              });
+           }
         }
       }, false);
 
@@ -133,6 +142,107 @@ const getInjectedScript = (socketUrl: string) => `
           } catch(err) {}
         }, true);
       });
+      let lastScrollTime = 0;
+      let isProgrammaticScroll = false; // FLAG TO PREVENT ECHO LOOP
+
+      // USE CAPTURE PHASE (true) to catch all scroll events, including those that don't bubble
+      window.addEventListener('scroll', function(e) {
+        if (isProgrammaticScroll) {
+          isProgrammaticScroll = false;
+          return;
+        }
+
+        const now = Date.now();
+        if (now - lastScrollTime < 20) return; // Throttle 20ms
+        lastScrollTime = now;
+
+        // Try to determine the main scroll container
+        // If the event target is an element, use its scroll props. 
+        // Fallback to window scroll.
+        let scrollX, scrollY, sWidth, sHeight, cWidth, cHeight;
+        
+        const target = e.target;
+        const isWindow = target === document || target === window;
+        
+        if (isWindow) {
+           scrollX = window.scrollX;
+           scrollY = window.scrollY;
+           sWidth = document.documentElement.scrollWidth;
+           sHeight = document.documentElement.scrollHeight;
+           cWidth = document.documentElement.clientWidth;
+           cHeight = document.documentElement.clientHeight;
+        } else if (target instanceof Element) {
+           // Only sync if it seems like a main container (large enough)
+           if (target.clientWidth < window.innerWidth * 0.5 && target.clientHeight < window.innerHeight * 0.5) return;
+           
+           scrollX = target.scrollLeft;
+           scrollY = target.scrollTop;
+           sWidth = target.scrollWidth;
+           sHeight = target.scrollHeight;
+           cWidth = target.clientWidth;
+           cHeight = target.clientHeight;
+        } else {
+           return;
+        }
+
+
+        const docHeight = sHeight - cHeight;
+        const docWidth = sWidth - cWidth;
+        
+        const percentY = docHeight > 0 ? scrollY / docHeight : 0;
+        const percentX = docWidth > 0 ? scrollX / docWidth : 0;
+        
+        // precise selector
+        const selector = isWindow ? 'window' : getCssPath(target);
+        console.log('[DevOptic] Sending Scroll:', percentY, selector);
+
+        try {
+          window.parent.postMessage({
+             type: 'DEVOPTIC_SCROLL',
+             payload: { percentX, percentY, selector }
+          }, '*');
+        } catch(e) {}
+      }, true); // <--- CAPTURE TRUE IS CRITICAL
+      
+      // Handle incoming execution commands
+      window.addEventListener('message', function(event) {
+        if (event.data?.type === 'DEVOPTIC_CURSOR') {
+           var p = event.data.payload;
+           console.log('[DevOptic] Proxy Received:', p.action, p); // LOG RECEIVED COMMAND
+           
+           if (p.action === 'click') handleClick(p.x, p.y, p.button);
+           if (p.action === 'scroll') handleScroll(p.deltaX, p.deltaY);
+           if (p.action === 'scroll-percent') {
+              var targetEl = window;
+              if (p.selector && p.selector !== 'window') {
+                 try { targetEl = document.querySelector(p.selector) || window; } catch(e) {}
+              }
+              console.log('[DevOptic] Proxy Executing Scroll on:', targetEl === window ? 'window' : p.selector); // LOG EXECUTION TARGET
+              
+              var sHeight, cHeight, sWidth, cWidth;
+              if (targetEl === window) {
+                 sHeight = document.documentElement.scrollHeight;
+                 cHeight = document.documentElement.clientHeight;
+                 sWidth = document.documentElement.scrollWidth;
+                 cWidth = document.documentElement.clientWidth;
+              } else {
+                 sHeight = targetEl.scrollHeight;
+                 cHeight = targetEl.clientHeight; 
+                 sWidth = targetEl.scrollWidth;
+                 cWidth = targetEl.clientWidth;
+              }
+              
+              isProgrammaticScroll = true; // SET FLAG BEFORE SCROLLING
+              targetEl.scrollTo({
+                left: p.percentX * (sWidth - cWidth),
+                top: p.percentY * (sHeight - cHeight),
+                behavior: 'auto'
+              });
+              // Reset flag after small delay just in case scroll event is async delayed
+              setTimeout(function(){ isProgrammaticScroll = false; }, 100);
+           }
+        }
+      }, false);
     })();
   </script>
 `;
@@ -146,18 +256,18 @@ export async function GET(req: NextRequest) {
       httpAgent: ssrfFilter.http,
       httpsAgent: ssrfFilter.https,
       headers: { 'User-Agent': 'Mozilla/5.0 (DevOptic Bot)', 'Accept': 'text/html' },
-      timeout: 5000
+      timeout: 15000
     });
 
     const contentType = response.headers['content-type'];
     if (!contentType || !contentType.includes('text/html')) {
-        return new NextResponse("Target is not a webpage", { status: 400 });
+      return new NextResponse("Target is not a webpage", { status: 400 });
     }
 
     const $ = cheerio.load(response.data);
     const urlObj = new URL(url);
     const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
-    
+
     const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
     const FRONTEND_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
@@ -181,9 +291,9 @@ export async function GET(req: NextRequest) {
     const csp = `default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-ancestors 'self' ${FRONTEND_ORIGIN};`;
 
     $('head').append(getInjectedScript(SOCKET_SERVER_URL));
-    
+
     if ($('head').find('base').length === 0) {
-        $('head').prepend(`<base href="${baseUrl}/">`);
+      $('head').prepend(`<base href="${baseUrl}/">`);
     }
 
     const html = $.html();
@@ -192,16 +302,16 @@ export async function GET(req: NextRequest) {
       : `<!DOCTYPE html>${html}`;
 
     return new NextResponse(finalHtml, {
-        headers: {
-            "Content-Type": "text/html",
-            "Content-Security-Policy": csp,
-            "X-Content-Type-Options": "nosniff"
-        }
+      headers: {
+        "Content-Type": "text/html",
+        "Content-Security-Policy": csp,
+        "X-Content-Type-Options": "nosniff"
+      }
     });
 
   } catch (error: any) {
     if (error.code === 'ECONNREFUSED' || (error.message && error.message.includes('SSRF'))) {
-       return new NextResponse("Forbidden: Internal Resource", { status: 403 });
+      return new NextResponse("Forbidden: Internal Resource", { status: 403 });
     }
     console.error("Proxy Error:", error.message);
     return new NextResponse("Error loading target website", { status: 500 });

@@ -126,6 +126,9 @@ io.on('connection', (socket) => {
   socket.on('magic:highlight', relay('magic:highlight'));
   socket.on('magic:clear', relay('magic:clear'));
 
+  // --- SCROLL SYNC ---
+  socket.on('pixel:scroll', relay('pixel:scroll'));
+
   socket.on('disconnect', () => console.log('User disconnected:', socket.id));
 });
 
