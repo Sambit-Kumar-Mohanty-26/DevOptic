@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useCallback, useState } from "react";
 import type { Socket } from "socket.io-client";
 
 interface CursorControlProps {
@@ -22,24 +22,8 @@ interface CursorEvent {
 
 export const CursorControl = ({ sessionId, socket, controlGranted }: CursorControlProps) => {
     const [remoteCursor, setRemoteCursor] = useState<{ x: number; y: number; clicking: boolean } | null>(null);
-    const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
 
-    // Initialize BroadcastChannel for cross-origin iframe communication
-    useEffect(() => {
-        try {
-            broadcastChannelRef.current = new BroadcastChannel('devoptic-cursor');
-            console.log("[CursorControl] BroadcastChannel initialized");
-        } catch (e) {
-            console.log("[CursorControl] BroadcastChannel not available");
-        }
-        return () => {
-            broadcastChannelRef.current?.close();
-        };
-    }, []);
-
-    // Send command to iframe via BroadcastChannel (works cross-origin!)
     const sendToIframe = useCallback((action: string, pageX: number, pageY: number, extra?: { deltaX?: number; deltaY?: number; button?: number }) => {
-        // Find the iframe and calculate relative coordinates
         const iframes = document.querySelectorAll('iframe');
 
         iframes.forEach((iframe) => {
@@ -47,45 +31,35 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
             const iframeX = pageX - rect.left;
             const iframeY = pageY - rect.top;
 
-            // Check if click is within iframe bounds
             if (iframeX >= 0 && iframeY >= 0 && iframeX <= rect.width && iframeY <= rect.height) {
-                broadcastChannelRef.current?.postMessage({
-                    action,
-                    x: iframeX,
-                    y: iframeY,
-                    ...extra
-                });
 
-                try {
-                    iframe.contentWindow?.postMessage({
+                if (iframe.contentWindow) {
+                    iframe.contentWindow.postMessage({
                         type: 'DEVOPTIC_CURSOR',
                         payload: { action, x: iframeX, y: iframeY, ...extra }
-                    }, '*');
-                } catch (err) {
+                    }, '*'); // '*' allows sending to the proxy even if origin state is flux
                 }
             }
         });
     }, []);
 
-    // Simulate click
+    // Simulate click on the Guest's machine
     const simulateClick = useCallback((x: number, y: number, button: number = 0) => {
+        // Clamp coordinates to screen bounds
         x = Math.max(0, Math.min(x, window.innerWidth - 1));
         y = Math.max(0, Math.min(y, window.innerHeight - 1));
 
-        // Show visual click feedback
         setRemoteCursor(prev => prev ? { ...prev, x, y, clicking: true } : { x, y, clicking: true });
         setTimeout(() => setRemoteCursor(prev => prev ? { ...prev, clicking: false } : null), 200);
 
         const element = document.elementFromPoint(x, y) as HTMLElement;
         if (!element) return;
 
-        // For iframes, send via BroadcastChannel with CORRECT coordinates
         if (element.tagName === 'IFRAME') {
             sendToIframe('click', x, y, { button });
             return;
         }
 
-        // For regular elements
         const eventOptions: MouseEventInit = {
             bubbles: true, cancelable: true, view: window,
             clientX: x, clientY: y, button, buttons: button === 0 ? 1 : button,
@@ -100,8 +74,6 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
             try { clickable.click(); } catch (e) { }
         }
     }, [sendToIframe]);
-
-    // Simulate scroll
     const simulateScroll = useCallback((deltaX: number, deltaY: number, x?: number, y?: number) => {
         if (x !== undefined && y !== undefined) {
             const element = document.elementFromPoint(x, y);
@@ -158,7 +130,6 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
         };
     }, [socket, controlGranted, simulateClick, simulateScroll]);
 
-    // Render remote cursor overlay
     if (!controlGranted || !remoteCursor) return null;
 
     return (
@@ -181,7 +152,20 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
                 }}>
                 <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.86a.5.5 0 0 0-.85.35Z" fill="#8B5CF6" stroke="#fff" strokeWidth="1.5" />
             </svg>
-            <span style={{ position: 'absolute', left: 16, top: 12, background: '#8B5CF6', color: 'white', padding: '1px 4px', borderRadius: 3, fontSize: 9, fontWeight: 'bold' }}>HOST</span>
+            <span style={{ 
+                position: 'absolute', 
+                left: 16, 
+                top: 12, 
+                background: '#8B5CF6', 
+                color: 'white', 
+                padding: '2px 6px', 
+                borderRadius: 4, 
+                fontSize: 10, 
+                fontWeight: 'bold',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+            }}>
+                HOST
+            </span>
         </div>
     );
 };

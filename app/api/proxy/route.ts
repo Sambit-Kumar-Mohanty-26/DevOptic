@@ -46,19 +46,24 @@ const getInjectedScript = (socketUrl: string) => `
         }
       }
       
+      // --- SMOOTH SCROLL HANDLER (Host Control) ---
       function handleScroll(deltaX, deltaY) { 
         var x = deltaX || 0;
         var y = deltaY || 0;
-        window.scrollBy({ left: x, top: y, behavior: 'auto' });
-        if (document.documentElement) document.documentElement.scrollBy(x, y);
-        if (document.body) document.body.scrollBy(x, y);
+        
+        // Use smooth scrolling for small/medium movements to hide network jitter
+        // Revert to auto (instant) for massive jumps to prevent lag
+        var behavior = (Math.abs(x) > 400 || Math.abs(y) > 400) ? 'auto' : 'smooth';
+
+        window.scrollBy({ left: x, top: y, behavior: behavior });
+        if (document.documentElement) document.documentElement.scrollBy({ left: x, top: y, behavior: behavior });
+        if (document.body) document.body.scrollBy({ left: x, top: y, behavior: behavior });
       }
       
       var sessionId = 'session-1';
       try {
-        if (document.referrer) {
-          var match = document.referrer.match(/\\/live\\/([^/?]+)/);
-          if (match) sessionId = match[1];
+        if (window.parent !== window) {
+           // Fallback logic
         }
       } catch(e) {}
       
@@ -66,7 +71,9 @@ const getInjectedScript = (socketUrl: string) => `
       script.src = 'https://cdn.socket.io/4.6.0/socket.io.min.js';
       script.onload = function() {
         var socket = io(window.DEVOPTIC_SOCKET_URL, { transports: ['websocket'] });
-        socket.on('connect', function() { socket.emit('join-session', sessionId); });
+        socket.on('connect', function() { 
+            socket.emit('join-session', sessionId); 
+        });
         
         socket.on('control:cursor', function(data) {
           if (data.type === 'scroll') handleScroll(data.deltaX, data.deltaY);
@@ -85,6 +92,7 @@ const getInjectedScript = (socketUrl: string) => `
       };
       document.head.appendChild(script);
 
+      // --- BROADCAST CHANNEL ---
       try {
         var bc = new BroadcastChannel('devoptic-cursor');
         bc.onmessage = function(event) { 
@@ -94,19 +102,44 @@ const getInjectedScript = (socketUrl: string) => `
         };
       } catch(e) {}
 
+      // --- POST MESSAGE LISTENER ---
       window.addEventListener('message', function(event) {
         if (event.data?.type === 'DEVOPTIC_CURSOR') {
            var p = event.data.payload;
            if (p.action === 'click') handleClick(p.x, p.y, p.button);
            if (p.action === 'scroll') handleScroll(p.deltaX, p.deltaY);
+           
+           // --- SMOOTH SYNC SCROLLING (Guest Sync) ---
            if (p.action === 'scroll-percent') {
-              var docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-              var docWidth = document.documentElement.scrollWidth - document.documentElement.clientWidth;
-              window.scrollTo({
-                left: p.percentX * docWidth,
-                top: p.percentY * docHeight,
-                behavior: 'auto'
+              var targetEl = window;
+              if (p.selector && p.selector !== 'window') {
+                 try { targetEl = document.querySelector(p.selector) || window; } catch(e) {}
+              }
+              
+              var sHeight, cHeight, sWidth, cWidth;
+              if (targetEl === window) {
+                 sHeight = document.documentElement.scrollHeight;
+                 cHeight = document.documentElement.clientHeight;
+                 sWidth = document.documentElement.scrollWidth;
+                 cWidth = document.documentElement.clientWidth;
+              } else {
+                 sHeight = targetEl.scrollHeight;
+                 cHeight = targetEl.clientHeight; 
+                 sWidth = targetEl.scrollWidth;
+                 cWidth = targetEl.clientWidth;
+              }
+              
+              isProgrammaticScroll = true; 
+              
+              targetEl.scrollTo({
+                left: p.percentX * (sWidth - cWidth),
+                top: p.percentY * (sHeight - cHeight),
+                behavior: 'smooth' // <--- CRITICAL FIX: Smooths out the jump
               });
+
+              // Block echo for 500ms to allow smooth scroll animation to finish
+              if (window.devopticScrollTimer) clearTimeout(window.devopticScrollTimer);
+              window.devopticScrollTimer = setTimeout(function(){ isProgrammaticScroll = false; }, 500);
            }
         }
       }, false);
@@ -142,25 +175,19 @@ const getInjectedScript = (socketUrl: string) => `
           } catch(err) {}
         }, true);
       });
-      let lastScrollTime = 0;
-      let isProgrammaticScroll = false; // FLAG TO PREVENT ECHO LOOP
 
-      // USE CAPTURE PHASE (true) to catch all scroll events, including those that don't bubble
+      // --- SCROLL EMITTER ---
+      let lastScrollTime = 0;
+      let isProgrammaticScroll = false; 
+
       window.addEventListener('scroll', function(e) {
-        if (isProgrammaticScroll) {
-          isProgrammaticScroll = false;
-          return;
-        }
+        if (isProgrammaticScroll) return; // Ignore our own smooth scrolls
 
         const now = Date.now();
-        if (now - lastScrollTime < 20) return; // Throttle 20ms
+        if (now - lastScrollTime < 30) return; // Increased throttle to 30ms for stability
         lastScrollTime = now;
 
-        // Try to determine the main scroll container
-        // If the event target is an element, use its scroll props. 
-        // Fallback to window scroll.
         let scrollX, scrollY, sWidth, sHeight, cWidth, cHeight;
-        
         const target = e.target;
         const isWindow = target === document || target === window;
         
@@ -172,9 +199,7 @@ const getInjectedScript = (socketUrl: string) => `
            cWidth = document.documentElement.clientWidth;
            cHeight = document.documentElement.clientHeight;
         } else if (target instanceof Element) {
-           // Only sync if it seems like a main container (large enough)
            if (target.clientWidth < window.innerWidth * 0.5 && target.clientHeight < window.innerHeight * 0.5) return;
-           
            scrollX = target.scrollLeft;
            scrollY = target.scrollTop;
            sWidth = target.scrollWidth;
@@ -185,16 +210,12 @@ const getInjectedScript = (socketUrl: string) => `
            return;
         }
 
-
         const docHeight = sHeight - cHeight;
         const docWidth = sWidth - cWidth;
         
         const percentY = docHeight > 0 ? scrollY / docHeight : 0;
         const percentX = docWidth > 0 ? scrollX / docWidth : 0;
-        
-        // precise selector
         const selector = isWindow ? 'window' : getCssPath(target);
-        console.log('[DevOptic] Sending Scroll:', percentY, selector);
 
         try {
           window.parent.postMessage({
@@ -202,47 +223,7 @@ const getInjectedScript = (socketUrl: string) => `
              payload: { percentX, percentY, selector }
           }, '*');
         } catch(e) {}
-      }, true); // <--- CAPTURE TRUE IS CRITICAL
-      
-      // Handle incoming execution commands
-      window.addEventListener('message', function(event) {
-        if (event.data?.type === 'DEVOPTIC_CURSOR') {
-           var p = event.data.payload;
-           console.log('[DevOptic] Proxy Received:', p.action, p); // LOG RECEIVED COMMAND
-           
-           if (p.action === 'click') handleClick(p.x, p.y, p.button);
-           if (p.action === 'scroll') handleScroll(p.deltaX, p.deltaY);
-           if (p.action === 'scroll-percent') {
-              var targetEl = window;
-              if (p.selector && p.selector !== 'window') {
-                 try { targetEl = document.querySelector(p.selector) || window; } catch(e) {}
-              }
-              console.log('[DevOptic] Proxy Executing Scroll on:', targetEl === window ? 'window' : p.selector); // LOG EXECUTION TARGET
-              
-              var sHeight, cHeight, sWidth, cWidth;
-              if (targetEl === window) {
-                 sHeight = document.documentElement.scrollHeight;
-                 cHeight = document.documentElement.clientHeight;
-                 sWidth = document.documentElement.scrollWidth;
-                 cWidth = document.documentElement.clientWidth;
-              } else {
-                 sHeight = targetEl.scrollHeight;
-                 cHeight = targetEl.clientHeight; 
-                 sWidth = targetEl.scrollWidth;
-                 cWidth = targetEl.clientWidth;
-              }
-              
-              isProgrammaticScroll = true; // SET FLAG BEFORE SCROLLING
-              targetEl.scrollTo({
-                left: p.percentX * (sWidth - cWidth),
-                top: p.percentY * (sHeight - cHeight),
-                behavior: 'auto'
-              });
-              // Reset flag after small delay just in case scroll event is async delayed
-              setTimeout(function(){ isProgrammaticScroll = false; }, 100);
-           }
-        }
-      }, false);
+      }, true);
     })();
   </script>
 `;
@@ -255,13 +236,17 @@ export async function GET(req: NextRequest) {
     const response = await axios.get(url, {
       httpAgent: ssrfFilter.http,
       httpsAgent: ssrfFilter.https,
-      headers: { 'User-Agent': 'Mozilla/5.0 (DevOptic Bot)', 'Accept': 'text/html' },
-      timeout: 15000
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+      },
+      timeout: 15000,
+      validateStatus: () => true 
     });
 
     const contentType = response.headers['content-type'];
     if (!contentType || !contentType.includes('text/html')) {
-      return new NextResponse("Target is not a webpage", { status: 400 });
+      return NextResponse.redirect(url);
     }
 
     const $ = cheerio.load(response.data);
@@ -271,41 +256,66 @@ export async function GET(req: NextRequest) {
     const SOCKET_SERVER_URL = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
     const FRONTEND_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
-    const rewrite = (tag: string, attr: string) => {
-      $(tag).each((i, el) => {
-        const val = $(el).attr(attr);
-        if (val && !val.startsWith('http') && !val.startsWith('//') && !val.startsWith('data:')) {
-          try {
-            $(el).attr(attr, new URL(val, baseUrl).href);
-          } catch (e) {
-            console.warn('Rewrite warn:', val);
-          }
-        }
-      });
+    const wrapUrl = (targetUrl: string) => {
+      if (!targetUrl) return "";
+      if (targetUrl.startsWith("data:") || targetUrl.startsWith("#") || targetUrl.startsWith("mailto:") || targetUrl.startsWith("tel:")) return targetUrl;
+      
+      try {
+        const absoluteUrl = new URL(targetUrl, baseUrl).href;
+        return `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`;
+      } catch (e) {
+        return targetUrl;
+      }
     };
-    rewrite('link', 'href');
-    rewrite('script', 'src');
-    rewrite('img', 'src');
-    rewrite('a', 'href');
+
+    const resolveUrl = (targetUrl: string) => {
+        if (!targetUrl) return "";
+        if (targetUrl.startsWith("data:") || targetUrl.startsWith("http") || targetUrl.startsWith("//")) return targetUrl;
+        try {
+            return new URL(targetUrl, baseUrl).href;
+        } catch(e) {
+            return targetUrl;
+        }
+    };
+
+    $('base').remove();
+
+    $('a').each((i, el) => {
+      const href = $(el).attr('href');
+      if (href) {
+        $(el).attr('href', wrapUrl(href));
+        $(el).attr('target', '_self'); 
+      }
+    });
+
+    $('form').each((i, el) => {
+      const action = $(el).attr('action');
+      if (action) {
+        $(el).attr('action', wrapUrl(action));
+      }
+    });
+
+    $('img').each((i, el) => { $(el).attr('src', resolveUrl($(el).attr('src') || '')); });
+    $('script').each((i, el) => { $(el).attr('src', resolveUrl($(el).attr('src') || '')); });
+    $('link').each((i, el) => { $(el).attr('href', resolveUrl($(el).attr('href') || '')); });
+    
+    $('iframe').each((i, el) => { 
+        const src = $(el).attr('src');
+        if(src) $(el).attr('src', wrapUrl(src));
+    });
 
     const csp = `default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-ancestors 'self' ${FRONTEND_ORIGIN};`;
 
     $('head').append(getInjectedScript(SOCKET_SERVER_URL));
 
-    if ($('head').find('base').length === 0) {
-      $('head').prepend(`<base href="${baseUrl}/">`);
-    }
-
     const html = $.html();
-    const finalHtml = html.trim().toLowerCase().startsWith('<!doctype')
-      ? html
-      : `<!DOCTYPE html>${html}`;
-
-    return new NextResponse(finalHtml, {
+    
+    return new NextResponse(html, {
       headers: {
         "Content-Type": "text/html",
         "Content-Security-Policy": csp,
-        "X-Content-Type-Options": "nosniff"
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "SAMEORIGIN"
       }
     });
 
@@ -314,6 +324,6 @@ export async function GET(req: NextRequest) {
       return new NextResponse("Forbidden: Internal Resource", { status: 403 });
     }
     console.error("Proxy Error:", error.message);
-    return new NextResponse("Error loading target website", { status: 500 });
+    return new NextResponse(`Error loading target website: ${error.message}`, { status: 500 });
   }
 }

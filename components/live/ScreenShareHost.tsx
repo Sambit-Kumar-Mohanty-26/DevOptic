@@ -35,7 +35,8 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
         setResolution({ width: 0, height: 0 });
     }, []);
 
-    const calculateVideoCoordinates = (e: React.MouseEvent | React.WheelEvent) => {
+    // Updated to accept both React Synthetic Events and Native DOM Events
+    const calculateVideoCoordinates = (e: React.MouseEvent | React.WheelEvent | MouseEvent | WheelEvent) => {
         const video = videoRef.current;
         if (!video || video.videoWidth === 0) return null;
 
@@ -106,7 +107,6 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
 
         const coords = calculateVideoCoordinates(e);
         if (coords) {
-            // REMOVED LOCAL FEEDBACK HERE to prevent double-click visual
             sendCursorEvent("click", coords.x, coords.y, { button: e.button });
         }
     }, [hasControl, sendCursorEvent]);
@@ -119,26 +119,36 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
         }
     }, [hasControl, sendCursorEvent]);
 
-    const handleScroll = useCallback((e: React.WheelEvent) => {
-        if (!hasControl || !socket) return;
-        
-        e.preventDefault();
-        e.stopPropagation();
+    useEffect(() => {
+        const video = videoRef.current;
+        if (!video) return;
 
-        const coords = calculateVideoCoordinates(e);
+        const handleNativeWheel = (e: WheelEvent) => {
+            if (!hasControl || !socket) return;
 
-        if (coords) {
-            sendCursorEvent("scroll", coords.x, coords.y, {
-                deltaX: e.deltaX,
-                deltaY: e.deltaY,
-            });
-        }
+            e.preventDefault(); 
+            e.stopPropagation();
+
+            const coords = calculateVideoCoordinates(e);
+
+            if (coords) {
+                sendCursorEvent("scroll", coords.x, coords.y, {
+                    deltaX: e.deltaX,
+                    deltaY: e.deltaY,
+                });
+            }
+        };
+
+        video.addEventListener('wheel', handleNativeWheel, { passive: false });
+
+        return () => {
+            video.removeEventListener('wheel', handleNativeWheel);
+        };
     }, [hasControl, socket, sessionId, sendCursorEvent]);
 
     useEffect(() => {
         if (!socket) return;
         
-        // Request the stream immediately in case Host joins late
         console.log("[ScreenShareHost] Asking for stream...");
         socket.emit("webrtc:request-stream", { sessionId });
 
@@ -224,7 +234,6 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
                 </div>
             )}
 
-            {/* The Video Player */}
             <video
                 ref={videoRef}
                 autoPlay
@@ -234,7 +243,6 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
                 style={{ opacity: status === "streaming" ? 1 : 0 }}
                 onClick={handleClick}
                 onMouseMove={hasControl ? handleMouseMove : undefined}
-                onWheel={handleScroll}
             />
         </div>
     );

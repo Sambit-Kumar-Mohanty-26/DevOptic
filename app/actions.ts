@@ -1,10 +1,8 @@
 "use server";
 
 import { auth, currentUser } from "@clerk/nextjs/server";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/db"; // <--- Import from lib/db, DO NOT use new PrismaClient() here
 import { redirect } from "next/navigation";
-
-const prisma = new PrismaClient();
 
 export async function createSession() {
   const { userId } = await auth();

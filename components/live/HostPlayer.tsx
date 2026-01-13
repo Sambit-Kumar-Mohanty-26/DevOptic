@@ -1,206 +1,171 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Replayer } from "rrweb";
+import "rrweb/dist/style.css"; 
 import pako from "pako";
 import type { Socket } from "socket.io-client";
 
 interface HostPlayerProps {
-    sessionId: string;
-    socket: Socket | null;
+  sessionId: string;
+  socket: Socket | null;
 }
 
-// rrweb event types
 const EventType = {
-    Meta: 4,
-    FullSnapshot: 2,
-    IncrementalSnapshot: 3,
+  DomContentLoaded: 0,
+  Load: 1,
+  FullSnapshot: 2,
+  IncrementalSnapshot: 3,
+  Meta: 4,
+  Custom: 5,
 };
 
 export const HostPlayer = ({ sessionId, socket }: HostPlayerProps) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const iframeRef = useRef<HTMLIFrameElement>(null);
-    const [status, setStatus] = useState<"waiting" | "connected" | "playing">("waiting");
-    const [eventCount, setEventCount] = useState(0);
-    const [lastEvent, setLastEvent] = useState<any>(null);
-    const eventsRef = useRef<any[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const replayerRef = useRef<Replayer | null>(null);
+  const eventsBuffer = useRef<any[]>([]); 
+  
+  const [status, setStatus] = useState<"waiting" | "connected" | "playing">("waiting");
+  const [eventCount, setEventCount] = useState(0);
+  const [resolution, setResolution] = useState<{ width: number, height: number } | null>(null);
 
-    // Process and render the snapshot
-    const renderSnapshot = useCallback((snapshotEvent: any) => {
-        if (!iframeRef.current || !snapshotEvent?.data?.node) return;
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-        try {
-            const iframe = iframeRef.current;
-            const doc = iframe.contentDocument;
-            if (!doc) return;
+    const resizeHandler = () => {
+      if (!replayerRef.current || !resolution) return;
+      
+      const wrapper = container.querySelector('.replayer-wrapper') as HTMLElement;
+      if (!wrapper) return;
 
-            // Build HTML from the snapshot node tree
-            const buildHTML = (node: any): string => {
-                if (!node) return "";
+      const containerWidth = container.clientWidth;
+      const containerHeight = container.clientHeight;
+      const contentWidth = resolution.width;
+      const contentHeight = resolution.height;
 
-                if (node.type === 3) { // Text node
-                    return node.textContent || "";
-                }
+      const scaleX = containerWidth / contentWidth;
+      const scaleY = containerHeight / contentHeight;
+      const scale = Math.min(scaleX, scaleY, 1);
 
-                if (node.type === 2) { // Element node
-                    const tagName = node.tagName?.toLowerCase() || "div";
+      wrapper.style.transform = `scale(${scale})`;
+      wrapper.style.transformOrigin = 'top left';
+      wrapper.style.width = `${contentWidth}px`;
+      wrapper.style.height = `${contentHeight}px`;
+    };
 
-                    // Skip script tags for safety
-                    if (tagName === "script") return "";
+    const observer = new ResizeObserver(resizeHandler);
+    observer.observe(container);
+    resizeHandler();
 
-                    let attrs = "";
-                    if (node.attributes) {
-                        for (const [key, value] of Object.entries(node.attributes)) {
-                            if (key !== "src" || tagName !== "script") {
-                                attrs += ` ${key}="${String(value).replace(/"/g, "&quot;")}"`;
-                            }
-                        }
-                    }
+    return () => observer.disconnect();
+  }, [resolution]);
 
-                    let children = "";
-                    if (node.childNodes) {
-                        children = node.childNodes.map(buildHTML).join("");
-                    }
+  useEffect(() => {
+    if (!socket) return;
 
-                    // Self-closing tags
-                    if (["img", "br", "hr", "input", "meta", "link"].includes(tagName)) {
-                        return `<${tagName}${attrs} />`;
-                    }
+    console.log("[HostPlayer] Requesting full snapshot...");
+    socket.emit("rrweb:request-snapshot", { requestorId: socket.id });
 
-                    return `<${tagName}${attrs}>${children}</${tagName}>`;
-                }
-
-                if (node.type === 0) { // Document
-                    if (node.childNodes) {
-                        return node.childNodes.map(buildHTML).join("");
-                    }
-                }
-
-                return "";
-            };
-
-            const html = buildHTML(snapshotEvent.data.node);
-
-            // Write to iframe
-            doc.open();
-            doc.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            * { box-sizing: border-box; }
-            body { 
-              margin: 0; 
-              transform: scale(0.25); 
-              transform-origin: top left; 
-              width: 400%; 
-              height: 400%;
-              overflow: hidden;
-            }
-            img { max-width: 100%; height: auto; }
-          </style>
-        </head>
-        <body>
-          ${html}
-        </body>
-        </html>
-      `);
-            doc.close();
-
-            setStatus("playing");
-        } catch (err) {
-            console.error("[HostPlayer] Render error:", err);
+    const handleRrwebEvent = async (data: { event: string; timestamp: number }) => {
+      try {
+        const binaryString = atob(data.event);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
         }
-    }, []);
+        const decompressed = pako.inflate(bytes, { to: "string" });
+        const event = JSON.parse(decompressed);
 
-    useEffect(() => {
-        if (!socket) return;
-        console.log("[HostPlayer] Requesting full snapshot...");
-        socket.emit("rrweb:request-snapshot", sessionId);
+        setEventCount((prev) => prev + 1);
 
-        const handleRrwebEvent = async (data: { event: string; timestamp: number }) => {
-            try {
-                // Decode and decompress
-                const binaryString = atob(data.event);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                const decompressed = pako.inflate(bytes, { to: "string" });
-                const event = JSON.parse(decompressed);
+        if (!replayerRef.current) {
+          if (event.type === EventType.Meta) {
+             setResolution({ width: event.data.width, height: event.data.height });
+          }
 
-                if (status === "waiting") setStatus("connected");
+          if (event.type === EventType.FullSnapshot) {
+            console.log("[HostPlayer] Received Full Snapshot. Initializing Replayer...");
+            setStatus("playing");
+            
+            if (containerRef.current) {
+                containerRef.current.innerHTML = ""; 
+                
+                const initialEvents = [...eventsBuffer.current, event];
+                initialEvents.sort((a, b) => a.timestamp - b.timestamp);
 
-                eventsRef.current.push(event);
-                setEventCount(eventsRef.current.length);
-                setLastEvent({ type: event.type, time: Date.now() });
+                const replayer = new Replayer(initialEvents, {
+                  root: containerRef.current,
+                  liveMode: true,
+                  mouseTail: false,
+                });
+                
+                replayerRef.current = replayer;
 
-                // When we get a FullSnapshot, render it
-                if (event.type === EventType.FullSnapshot) {
-                    renderSnapshot(event);
-                }
-            } catch (err) {
-                console.error("[HostPlayer] Event error:", err);
+                // Cast to any to bypass missing type definition in alpha version
+                (replayer as any).start(); 
+                
+                eventsBuffer.current = [];
             }
-        };
+          } else {
+            eventsBuffer.current.push(event);
+            if(status === "waiting") setStatus("connected");
+          }
+        } else {
+          // Add event to running player
+          replayerRef.current.addEvent(event);
+        }
 
-        socket.on("rrweb:event", handleRrwebEvent);
+      } catch (err) {
+        console.error("[HostPlayer] Error processing event:", err);
+      }
+    };
 
-        return () => {
-            socket.off("rrweb:event", handleRrwebEvent);
-        };
-    }, [socket, sessionId, status, renderSnapshot]);
+    socket.on("rrweb:event", handleRrwebEvent);
 
-    return (
-        <div className="w-full h-full relative bg-slate-950 rounded-lg overflow-hidden border border-white/10">
-            {/* Status indicator */}
-            <div className="absolute top-2 right-2 z-20 flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${status === "playing" ? "bg-emerald-500" :
-                        status === "connected" ? "bg-amber-500 animate-pulse" :
-                            "bg-slate-600"
-                    }`} />
-                <span className="text-[8px] font-mono text-slate-500">
-                    {eventCount > 0 ? `${eventCount} events` : ""}
-                </span>
-            </div>
+    return () => {
+      socket.off("rrweb:event", handleRrwebEvent);
+      if (replayerRef.current) {
+        replayerRef.current.destroy();
+        replayerRef.current = null;
+      }
+    };
+  }, [socket, status]);
 
-            {/* Waiting overlay */}
-            {status !== "playing" && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-slate-950">
-                    {status === "waiting" ? (
-                        <>
-                            <div className="relative mb-3">
-                                <div className="w-8 h-8 border-2 border-violet-500/20 rounded-full" />
-                                <div className="absolute inset-0 w-8 h-8 border-2 border-t-violet-500 rounded-full animate-spin" />
-                            </div>
-                            <p className="text-violet-400 text-[9px] font-mono tracking-widest uppercase">
-                                Waiting for Guest...
-                            </p>
-                        </>
-                    ) : (
-                        <>
-                            <div className="w-2 h-2 bg-amber-500 rounded-full mb-2 animate-pulse" />
-                            <p className="text-amber-400 text-[9px] font-mono tracking-widest uppercase">
-                                Receiving data...
-                            </p>
-                            <p className="text-slate-500 text-[8px] font-mono mt-1">
-                                {eventCount} events
-                            </p>
-                        </>
-                    )}
-                </div>
-            )}
+  return (
+    <div className="w-full h-full relative bg-slate-950 rounded-lg overflow-hidden border border-white/10 flex items-center justify-center">
+      <div 
+        ref={containerRef} 
+        className="relative w-full h-full overflow-hidden flex items-center justify-center"
+      />
 
-            {/* Iframe for rendering */}
-            <iframe
-                ref={iframeRef}
-                className="w-full h-full border-none bg-white"
-                style={{
-                    opacity: status === "playing" ? 1 : 0,
-                    transition: "opacity 0.3s ease",
-                }}
-                sandbox="allow-same-origin"
-                title="Screen Mirror"
-            />
+      <div className="absolute top-2 right-2 z-50 flex items-center gap-2 pointer-events-none">
+        <div className={`w-2 h-2 rounded-full ${
+          status === "playing" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
+          status === "connected" ? "bg-amber-500 animate-pulse" : 
+          "bg-slate-600"
+        }`} />
+        <span className="text-[9px] font-mono text-slate-500 bg-slate-900/80 px-1.5 py-0.5 rounded backdrop-blur-sm border border-white/5">
+           RRWEB: {status.toUpperCase()} | EVENTS: {eventCount}
+        </span>
+      </div>
+
+      {status !== "playing" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-40 bg-slate-950/80 backdrop-blur-sm">
+          {status === "waiting" ? (
+             <div className="flex flex-col items-center">
+                <div className="w-8 h-8 border-2 border-violet-500/20 rounded-full border-t-violet-500 animate-spin mb-3" />
+                <p className="text-violet-400 text-[10px] font-mono tracking-widest uppercase animate-pulse">Waiting for Guest Stream...</p>
+             </div>
+          ) : (
+             <div className="flex flex-col items-center">
+                <div className="w-8 h-8 border-2 border-amber-500/20 rounded-full border-t-amber-500 animate-spin mb-3" />
+                <p className="text-amber-400 text-[10px] font-mono tracking-widest uppercase">Buffering Snapshot...</p>
+                <p className="text-slate-500 text-[9px] mt-1">{eventsBuffer.current.length} frames queued</p>
+             </div>
+          )}
         </div>
-    );
+      )}
+    </div>
+  );
 };
