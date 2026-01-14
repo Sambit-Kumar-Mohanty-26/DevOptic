@@ -653,7 +653,7 @@ export default function LiveWorkspace({ params }: PageProps) {
 
     else if (activeTool === "text") {
       canvas.defaultCursor = "text";
-      canvas.on("mouse:down", (o) => {
+      canvas.on("mouse:up", (o) => {
         const pointer = canvas.getScenePoint(o.e);
         const text = new fabric.IText("Type...", {
           left: pointer.x, top: pointer.y,
@@ -662,9 +662,13 @@ export default function LiveWorkspace({ params }: PageProps) {
         });
         canvas.add(text);
         canvas.setActiveObject(text);
+        canvas.requestRenderAll();
         text.enterEditing();
-        setActiveTool("select");
+        text.selectAll(); 
         emitObjectUpdate(text);
+        setTimeout(() => {
+            setActiveTool("select");
+        }, 100);
       });
     }
   }, [activeTool, activeColor, brushSize, sessionId]);

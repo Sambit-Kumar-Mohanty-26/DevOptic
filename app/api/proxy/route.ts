@@ -13,6 +13,9 @@ const getInjectedScript = (socketUrl: string) => `
       window.DEVOPTIC_SOCKET_URL = "${socketUrl}";
       console.log('[DevOptic] Connecting to:', window.DEVOPTIC_SOCKET_URL);
       
+      const LERP_FACTOR = 0.16;
+      const PRECISION = 0.5;
+      
       var style = document.createElement('style');
       style.innerHTML = \`
         html, body { margin: 0 !important; padding: 0 !important; transform: none !important; zoom: 1 !important; }
@@ -22,6 +25,68 @@ const getInjectedScript = (socketUrl: string) => `
         }
       \`;
       document.head.appendChild(style);
+
+      let targetScrollY = window.scrollY;
+      let targetScrollX = window.scrollX;
+      let isAnimating = false;
+      let isProgrammaticScroll = false;
+
+      function updateScroll() {
+        if (!isAnimating) return;
+
+        const currentY = window.scrollY;
+        const currentX = window.scrollX;
+
+        // Calculate distance to target
+        const diffY = targetScrollY - currentY;
+        const diffX = targetScrollX - currentX;
+
+        // If we are close enough, snap to target and stop to save CPU
+        if (Math.abs(diffY) < PRECISION && Math.abs(diffX) < PRECISION) {
+            isAnimating = false;
+            return;
+        }
+
+        // Linear Interpolation: Move 15% of the distance each frame
+        const stepY = diffY * LERP_FACTOR;
+        const stepX = diffX * LERP_FACTOR;
+
+        // Perform the scroll
+        isProgrammaticScroll = true;
+        window.scrollTo(currentX + stepX, currentY + stepY);
+        
+        // Edge case: Sync document element if window scroll didn't catch it
+        if (document.documentElement) {
+             document.documentElement.scrollLeft = currentX + stepX;
+             document.documentElement.scrollTop = currentY + stepY;
+        }
+
+        // Reset echo flag after this frame
+        setTimeout(() => isProgrammaticScroll = false, 0);
+
+        // Continue loop
+        requestAnimationFrame(updateScroll);
+      }
+
+      // This receives the raw deltas from the Host and updates the Target
+      function addScrollTarget(deltaX, deltaY) {
+         targetScrollX += deltaX;
+         targetScrollY += deltaY;
+
+         // Clamp to page bounds so we don't scroll into infinity
+         const maxScrollY = document.documentElement.scrollHeight - window.innerHeight;
+         const maxScrollX = document.documentElement.scrollWidth - window.innerWidth;
+         
+         targetScrollY = Math.max(0, Math.min(targetScrollY, maxScrollY));
+         targetScrollX = Math.max(0, Math.min(targetScrollX, maxScrollX));
+
+         if (!isAnimating) {
+             isAnimating = true;
+             // Safety: If actual scroll position drifted, resync target before starting
+             if (Math.abs(targetScrollY - window.scrollY) > 200) targetScrollY = window.scrollY + deltaY;
+             requestAnimationFrame(updateScroll);
+         }
+      }
       
       // Show click ripple at position
       function showRipple(x, y) {
@@ -46,20 +111,6 @@ const getInjectedScript = (socketUrl: string) => `
         }
       }
       
-      // --- SMOOTH SCROLL HANDLER (Host Control) ---
-      function handleScroll(deltaX, deltaY) { 
-        var x = deltaX || 0;
-        var y = deltaY || 0;
-        
-        // Use smooth scrolling for small/medium movements to hide network jitter
-        // Revert to auto (instant) for massive jumps to prevent lag
-        var behavior = (Math.abs(x) > 400 || Math.abs(y) > 400) ? 'auto' : 'smooth';
-
-        window.scrollBy({ left: x, top: y, behavior: behavior });
-        if (document.documentElement) document.documentElement.scrollBy({ left: x, top: y, behavior: behavior });
-        if (document.body) document.body.scrollBy({ left: x, top: y, behavior: behavior });
-      }
-      
       var sessionId = 'session-1';
       try {
         if (window.parent !== window) {
@@ -76,7 +127,10 @@ const getInjectedScript = (socketUrl: string) => `
         });
         
         socket.on('control:cursor', function(data) {
-          if (data.type === 'scroll') handleScroll(data.deltaX, data.deltaY);
+          if (data.type === 'scroll') {
+             // Pass data to the accumulator instead of scrolling directly
+             addScrollTarget(data.deltaX, data.deltaY);
+          }
           if (data.type === 'click') {
              var x, y;
              if (data.iframeX !== undefined) {
@@ -98,18 +152,16 @@ const getInjectedScript = (socketUrl: string) => `
         bc.onmessage = function(event) { 
             var p = event.data;
             if (p.action === 'click') handleClick(p.x, p.y, p.button); 
-            if (p.action === 'scroll') handleScroll(p.deltaX, p.deltaY);
+            if (p.action === 'scroll') addScrollTarget(p.deltaX, p.deltaY);
         };
       } catch(e) {}
 
-      // --- POST MESSAGE LISTENER ---
       window.addEventListener('message', function(event) {
         if (event.data?.type === 'DEVOPTIC_CURSOR') {
            var p = event.data.payload;
            if (p.action === 'click') handleClick(p.x, p.y, p.button);
-           if (p.action === 'scroll') handleScroll(p.deltaX, p.deltaY);
+           if (p.action === 'scroll') addScrollTarget(p.deltaX, p.deltaY);
            
-           // --- SMOOTH SYNC SCROLLING (Guest Sync) ---
            if (p.action === 'scroll-percent') {
               var targetEl = window;
               if (p.selector && p.selector !== 'window') {
@@ -129,17 +181,21 @@ const getInjectedScript = (socketUrl: string) => `
                  cWidth = targetEl.clientWidth;
               }
               
+              var top = p.percentY * (sHeight - cHeight);
+              var left = p.percentX * (sWidth - cWidth);
+
               isProgrammaticScroll = true; 
               
-              targetEl.scrollTo({
-                left: p.percentX * (sWidth - cWidth),
-                top: p.percentY * (sHeight - cHeight),
-                behavior: 'smooth' // <--- CRITICAL FIX: Smooths out the jump
-              });
+              // Use auto (instant) for sync to prevent drift
+              targetEl.scrollTo({ left: left, top: top, behavior: 'auto' });
 
-              // Block echo for 500ms to allow smooth scroll animation to finish
+              if (targetEl === window) {
+                  targetScrollY = top;
+                  targetScrollX = left;
+              }
+
               if (window.devopticScrollTimer) clearTimeout(window.devopticScrollTimer);
-              window.devopticScrollTimer = setTimeout(function(){ isProgrammaticScroll = false; }, 500);
+              window.devopticScrollTimer = setTimeout(function(){ isProgrammaticScroll = false; }, 50);
            }
         }
       }, false);
@@ -177,14 +233,17 @@ const getInjectedScript = (socketUrl: string) => `
       });
 
       // --- SCROLL EMITTER ---
-      let lastScrollTime = 0;
-      let isProgrammaticScroll = false; 
-
+      let lastScrollTime = 0;     
       window.addEventListener('scroll', function(e) {
-        if (isProgrammaticScroll) return; // Ignore our own smooth scrolls
+        if (isProgrammaticScroll) return; 
+
+        if (!isAnimating) {
+            targetScrollY = window.scrollY;
+            targetScrollX = window.scrollX;
+        }
 
         const now = Date.now();
-        if (now - lastScrollTime < 30) return; // Increased throttle to 30ms for stability
+        if (now - lastScrollTime < 30) return; 
         lastScrollTime = now;
 
         let scrollX, scrollY, sWidth, sHeight, cWidth, cHeight;
