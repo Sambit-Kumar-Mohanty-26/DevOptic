@@ -90,16 +90,15 @@ export default function LiveWorkspace({ params }: PageProps) {
   useEffect(() => {
     const initSocket = async () => {
       try {
-        // Get the Security Token from Clerk
-        const token = await getToken();
-
-        // Connect with the token
         const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
-
         const socket = io(socketUrl, {
-          auth: {
-            token: token
-          }
+          auth: async (cb) => {
+            const token = await getToken(); 
+            cb({ token });
+          },
+          reconnection: true,
+          reconnectionAttempts: Infinity, 
+          reconnectionDelay: 1000,
         });
         socketRef.current = socket;
 

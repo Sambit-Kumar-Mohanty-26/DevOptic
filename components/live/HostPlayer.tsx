@@ -85,7 +85,6 @@ export const HostPlayer = ({ sessionId, socket }: HostPlayerProps) => {
           }
 
           if (event.type === EventType.FullSnapshot) {
-            console.log("[HostPlayer] Received Full Snapshot. Initializing Replayer...");
             setStatus("playing");
             
             if (containerRef.current) {
@@ -101,8 +100,6 @@ export const HostPlayer = ({ sessionId, socket }: HostPlayerProps) => {
                 });
                 
                 replayerRef.current = replayer;
-
-                // Cast to any to bypass missing type definition in alpha version
                 (replayer as any).start(); 
                 
                 eventsBuffer.current = [];
@@ -112,7 +109,6 @@ export const HostPlayer = ({ sessionId, socket }: HostPlayerProps) => {
             if(status === "waiting") setStatus("connected");
           }
         } else {
-          // Add event to running player
           replayerRef.current.addEvent(event);
         }
 
@@ -121,10 +117,35 @@ export const HostPlayer = ({ sessionId, socket }: HostPlayerProps) => {
       }
     };
 
+    const handleRrwebBatch = async (data: { batch: string; timestamp: number }) => {
+      try {
+        const binaryString = atob(data.batch);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+        
+        const decompressed = pako.inflate(bytes, { to: "string" });
+        const events = JSON.parse(decompressed) as any[]; // This is an Array now
+
+        if (!replayerRef.current) {
+            // Buffer them if player isn't ready
+            eventsBuffer.current.push(...events);
+        } else {
+            // Add all events to player
+            events.forEach(e => replayerRef.current?.addEvent(e));
+        }
+        
+        setEventCount(prev => prev + events.length);
+      } catch (err) {
+        console.error("Batch Error:", err);
+      }
+    };
+
     socket.on("rrweb:event", handleRrwebEvent);
+    socket.on("rrweb:batch", handleRrwebBatch);
 
     return () => {
       socket.off("rrweb:event", handleRrwebEvent);
+      socket.off("rrweb:batch", handleRrwebBatch); 
       if (replayerRef.current) {
         replayerRef.current.destroy();
         replayerRef.current = null;

@@ -20,12 +20,20 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
         info: typeof console.info;
     } | null>(null);
 
+    const eventBuffer = useRef<any[]>([]);
+    const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
     useEffect(() => {
         if (!socket || !isRecording) {
             // Cleanup if recording stops
             if (stopRecordingRef.current) {
                 stopRecordingRef.current();
                 stopRecordingRef.current = null;
+            }
+            // Cleanup batch interval
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
             }
             // Restore console
             if (consoleOverridesRef.current) {
@@ -38,28 +46,35 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
             return;
         }
 
-        console.log("[GuestRecorder] Starting rrweb recording for session:", sessionId);
+        console.log("[GuestRecorder] Starting Batched rrweb recording for session:", sessionId);
+
+        // The Batch Flush Loop
+        intervalRef.current = setInterval(() => {
+            if (eventBuffer.current.length === 0) return;
+
+            try {
+                // Compress the Entire batch at once (Much better compression ratio)
+                const payload = JSON.stringify(eventBuffer.current);
+                const compressed = pako.deflate(payload);
+                const base64 = btoa(String.fromCharCode(...compressed));
+
+                // Emit as a 'batch' event
+                socket.emit("rrweb:batch", {
+                    sessionId,
+                    batch: base64,
+                    timestamp: Date.now(),
+                });
+                
+                eventBuffer.current = [];
+            } catch (err) {
+                console.error("[GuestRecorder] Failed to emit batch:", err);
+            }
+        }, 500);
 
         // --- RRWEB RECORDING ---
         const stopFn = record({
             emit(event) {
-                try {
-                    // Compress event data with pako
-                    const eventString = JSON.stringify(event);
-                    const compressed = pako.deflate(eventString);
-                    // Convert to base64 for safe transmission
-                    const base64 = btoa(String.fromCharCode(...compressed));
-
-                    socket.emit("rrweb:event", {
-                        sessionId,
-                        event: base64,
-                        timestamp: Date.now(),
-                    });
-
-                    console.log("[GuestRecorder] Sent rrweb event, type:", event.type, "size:", base64.length);
-                } catch (err) {
-                    console.error("[GuestRecorder] Failed to emit rrweb event:", err);
-                }
+                eventBuffer.current.push(event);
             },
             // Capture all events for real-time mirroring
             checkoutEveryNms: 5000,
@@ -175,11 +190,17 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
         return () => {
             // Cleanup on unmount
             console.log("[GuestRecorder] Stopping recording");
-            socket.off('rrweb:request-snapshot', handleSnapshotRequest);
+            socket.off('rrweb:request-snapshot', handleSnapshotRequest);           
             if (stopRecordingRef.current) {
                 stopRecordingRef.current();
                 stopRecordingRef.current = null;
             }
+            
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+
             if (consoleOverridesRef.current) {
                 console.log = consoleOverridesRef.current.log;
                 console.warn = consoleOverridesRef.current.warn;

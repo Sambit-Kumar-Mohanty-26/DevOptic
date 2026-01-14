@@ -176,6 +176,7 @@ io.on('connection', (socket) => {
   // --- SCROLL SYNC ---
   socket.on('pixel:scroll', relay('pixel:scroll'));
   socket.on('privacy:sync', (data) => socket.to(data.sessionId).emit('privacy:sync', data));
+  socket.on('rrweb:batch', relay('rrweb:batch'));
 
   socket.on('disconnect', () => {
     for (const [sessionId, state] of Object.entries(sessionState)) {
