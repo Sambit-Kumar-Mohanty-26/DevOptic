@@ -53,10 +53,16 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
             if (eventBuffer.current.length === 0) return;
 
             try {
-                // Compress the Entire batch at once (Much better compression ratio)
+                // Compress the Entire batch at once
                 const payload = JSON.stringify(eventBuffer.current);
                 const compressed = pako.deflate(payload);
-                const base64 = btoa(String.fromCharCode(...compressed));
+                const CHUNK_SIZE = 0x8000;
+                let result = '';
+                for (let i = 0; i < compressed.length; i += CHUNK_SIZE) {
+                    const chunk = compressed.subarray(i, i + CHUNK_SIZE);
+                    result += String.fromCharCode.apply(null, Array.from(chunk));
+                }
+                const base64 = btoa(result);
 
                 // Emit as a 'batch' event
                 socket.emit("rrweb:batch", {
@@ -68,6 +74,7 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
                 eventBuffer.current = [];
             } catch (err) {
                 console.error("[GuestRecorder] Failed to emit batch:", err);
+                eventBuffer.current = [];
             }
         }, 500);
 

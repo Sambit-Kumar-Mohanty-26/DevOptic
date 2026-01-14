@@ -26,7 +26,7 @@ import { NetworkCapture } from "@/components/live/NetworkCapture";
 import { RemoteNetwork } from "@/components/live/RemoteNetwork";
 import { RemoteControlRequest } from "@/components/live/RemoteControlRequest";
 import { CursorControl } from "@/components/live/CursorControl";
-import { getSessionRole } from "@/app/actions"; 
+import { getSessionRole } from "@/app/actions";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -46,7 +46,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [role, setRole] = useState<"guest" | "host" | null>(null); 
+  const [role, setRole] = useState<"guest" | "host" | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [hasControl, setHasControl] = useState(false);
   const [controlGranted, setControlGranted] = useState(false);
@@ -61,6 +61,9 @@ export default function LiveWorkspace({ params }: PageProps) {
   const socketRef = useRef<Socket | null>(null);
 
   const remoteRef = useRef<Record<string, fabric.Path>>({});
+  const overlayObjectsRef = useRef<any[]>([]);
+  const whiteboardObjectsRef = useRef<any[]>([]);
+  const prevPixelSubModeRef = useRef<"overlay" | "whiteboard">("overlay");
 
   const stabilizePath = (canvas: fabric.Canvas, dirtyPath: fabric.Path) => {
     const pathData = (dirtyPath.path as any[]);
@@ -110,7 +113,7 @@ export default function LiveWorkspace({ params }: PageProps) {
           if (data.role === 'guest') {
             const isTaken = data.status === 'taken';
             setIsGuestTaken(isTaken);
-            
+
             if (isTaken && data.userId !== socket.id && role === 'guest') {
               setRole(null); 
               setIsRecording(false);
@@ -206,6 +209,17 @@ export default function LiveWorkspace({ params }: PageProps) {
           const canvas = fabricCanvas.current;
           if (!canvas) return;
 
+          if (objData.layerMode && objData.layerMode !== pixelSubMode) {
+             console.log(`[Layer] Received ${objData.layerMode} object, storing in background.`);
+             
+             if (objData.layerMode === 'overlay') {
+                overlayObjectsRef.current.push(objData);
+             } else {
+                whiteboardObjectsRef.current.push(objData);
+             }
+             return; 
+          }
+
           const w = canvas.width || 1;
           const h = canvas.height || 1;
           const options = { ...objData };
@@ -216,12 +230,8 @@ export default function LiveWorkspace({ params }: PageProps) {
           const existingObj = canvas.getObjects().find((o: any) => (o as any).id === options.id);
 
           if (existingObj) {
-            // If we have a local stabilized path (from cursor:up), it might already be perfect.
-            // We simply ensure properties are synced.
             const { type, ...safeOptions } = options;
             if (existingObj.type === 'path') {
-              // We only update if the server version is significantly different 
-              // or if it wasn't the result of our own streaming
               (existingObj as any).path = safeOptions.path;
               if (safeOptions.pathOffset) (existingObj as any).pathOffset = safeOptions.pathOffset;
             }
@@ -232,12 +242,14 @@ export default function LiveWorkspace({ params }: PageProps) {
               const newPath = new fabric.Path(options.path, options);
               (newPath as any).isRemote = true;
               (newPath as any).id = options.id;
+              (newPath as any).layerMode = options.layerMode; 
               canvas.add(newPath);
             } else {
               fabric.util.enlivenObjects([options]).then((enlivenedObjects: any[]) => {
                 enlivenedObjects.forEach((obj) => {
                   (obj as any).isRemote = true;
                   (obj as any).id = options.id;
+                  (obj as any).layerMode = options.layerMode;
                   canvas.add(obj);
                 });
                 canvas.requestRenderAll();
@@ -331,6 +343,26 @@ export default function LiveWorkspace({ params }: PageProps) {
             }, '*');
           }
         });
+
+        socket.on('mode:switch', (data: { mode: 'debug' | 'pixel'; userId: string }) => {
+          if (data.userId === socket.id) return;
+
+          console.log(`[MODE SYNC] Received mode switch to ${data.mode}`);
+
+          if (data.mode === 'pixel') {
+            toast.info('Guest switched to Pixel mode - following along...', {
+              icon: '🎨',
+              duration: 3000
+            });
+            setMode('pixel');
+          } else {
+            toast.info('Guest switched to Debug mode - following along...', {
+              icon: '🔧',
+              duration: 3000
+            });
+            setMode('debug');
+          }
+        });
       } catch (err) {
         console.error("Failed to initialize socket:", err);
       }
@@ -343,8 +375,6 @@ export default function LiveWorkspace({ params }: PageProps) {
     };
   }, [sessionId, getToken]);
 
-  // --- CANVAS INIT & SENDING LOGIC ---
-
   const emitObjectUpdate = (obj: any) => {
     if (!obj || obj.isRemote || obj.id === 'magic-highlight') return;
     if (!obj.id) obj.id = crypto.randomUUID();
@@ -352,7 +382,11 @@ export default function LiveWorkspace({ params }: PageProps) {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
 
-    const data = obj.toObject(['id', 'perPixelTargetFind', 'targetFindTolerance', 'pathOffset']);
+    // CHANGE: Include 'layerMode' in the exported object
+    const data = obj.toObject(['id', 'perPixelTargetFind', 'targetFindTolerance', 'pathOffset', 'layerMode']);
+    
+    // Tag the object with the current mode (overlay or whiteboard)
+    data.layerMode = pixelSubMode; 
 
     const w = canvas.width || 1;
     const h = canvas.height || 1;
@@ -373,21 +407,21 @@ export default function LiveWorkspace({ params }: PageProps) {
     const assignRole = async () => {
       try {
         const result = await getSessionRole(sessionId);
-        
+
         if (result.error) {
-            toast.error(result.error);
-            return;
+          toast.error(result.error);
+          return;
         }
 
         if (result.role === 'host') {
-            console.log("[AutoRole] User is HOST");
-            setRole("host");
-            setIsRecording(false); // Host doesn't record, they watch
+          console.log("[AutoRole] User is HOST");
+          setRole("host");
+          setIsRecording(false);
         } else {
-            console.log("[AutoRole] User is GUEST");
-            setRole("guest");
-            setIsRecording(true); // Guest starts recording Immediately
-            toast.success("Joined as Guest - Sharing Screen");
+          console.log("[AutoRole] User is GUEST");
+          setRole("guest");
+          setIsRecording(true);
+          toast.success("Joined as Guest - Sharing Screen");
         }
       } catch (err) {
         console.error("Failed to assign role:", err);
@@ -456,11 +490,70 @@ export default function LiveWorkspace({ params }: PageProps) {
     };
   }, [sessionId]);
 
-  // --- BACKGROUND ---
+  // --- BACKGROUND & LAYER PERSISTENCE ---
   useEffect(() => {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
-    canvas.backgroundColor = "transparent";
+
+    const prevMode = prevPixelSubModeRef.current;
+
+    if (prevMode !== pixelSubMode) {
+      // Filter out Magic Highlight and Streaming cursors
+      const currentObjects = canvas.getObjects().filter((obj: any) => {
+        return obj.id !== 'magic-highlight' && !(obj as any).isStreaming;
+      });
+
+      // Serialize and include 'layerMode'
+      const serializedObjects = currentObjects.map((obj: any) => {
+          const data = obj.toObject(['id', 'isRemote', 'layerMode']);
+          data.layerMode = prevMode;
+          return data;
+      });
+
+      //  Save to appropriate Ref
+      if (prevMode === 'overlay') {
+        overlayObjectsRef.current = serializedObjects;
+      } else {
+        whiteboardObjectsRef.current = serializedObjects;
+      }
+
+      // Clear Canvas (Remove ONLY user objects, keep system stuff if any)
+      currentObjects.forEach((obj: any) => {
+        (obj as any).isRemote = true; 
+        canvas.remove(obj);
+      });
+
+      // Restore Objects for the NEW mode
+      const objectsToRestore = pixelSubMode === 'overlay'
+        ? overlayObjectsRef.current
+        : whiteboardObjectsRef.current;
+
+      if (objectsToRestore.length > 0) {
+        fabric.util.enlivenObjects(objectsToRestore).then((enlivenedObjects: any[]) => {
+          enlivenedObjects.forEach((obj) => {
+            // Mark as remote temporarily so we don't re-emit 'draw:add' when adding back to canvas
+            (obj as any).isRemote = true; 
+            (obj as any).layerMode = pixelSubMode;
+            canvas.add(obj);
+            
+            obj.setCoords();
+          });
+          
+          canvas.requestRenderAll();
+        });
+      }
+
+      prevPixelSubModeRef.current = pixelSubMode;
+    }
+
+    // Toggle Background
+    if (pixelSubMode === 'whiteboard') {
+        canvas.backgroundColor = 'transparent';
+        // Add a grid pattern if desired, or handled via CSS in main div
+    } else {
+        canvas.backgroundColor = 'transparent';
+    }
+    
     canvas.requestRenderAll();
   }, [pixelSubMode]);
 
@@ -728,7 +821,7 @@ export default function LiveWorkspace({ params }: PageProps) {
         text.selectAll(); 
         emitObjectUpdate(text);
         setTimeout(() => {
-            setActiveTool("select");
+          setActiveTool("select"); 
         }, 100);
       });
     }
@@ -827,20 +920,20 @@ export default function LiveWorkspace({ params }: PageProps) {
       // Listen for the 'DEVOPTIC_PRIVACY' message from the proxy script
       if (event.data?.type === 'DEVOPTIC_PRIVACY') {
         const isActive = event.data.payload.active;
-        
+
         // Only emit if state actually changed (prevents infinite loops)
         if (isActive !== isPrivacyActive) {
-            setIsPrivacyActive(isActive);
-            socketRef.current?.emit('privacy:sync', { sessionId, active: isActive });
-            
-            if (isActive) toast("Sensitive Input Detected - Screen Masked");
+          setIsPrivacyActive(isActive);
+          socketRef.current?.emit('privacy:sync', { sessionId, active: isActive });
+
+          if (isActive) toast("Sensitive Input Detected - Screen Masked");
         }
       }
     };
-    
+
     window.addEventListener('message', handlePrivacyMessage);
     return () => window.removeEventListener('message', handlePrivacyMessage);
-  }, [sessionId, isPrivacyActive]); 
+  }, [sessionId, isPrivacyActive]);
 
   // --- SCROLL SYNC HANDLER ---
   useEffect(() => {
@@ -900,6 +993,31 @@ export default function LiveWorkspace({ params }: PageProps) {
     toast.info("Board cleared");
   };
 
+  const handleModeSwitch = (newMode: 'debug' | 'pixel') => {
+    if (mode === newMode) return;
+
+    setMode(newMode);
+
+    // Guest: Emit mode change to sync with Host & control screen sharing
+    if (role === 'guest') {
+      socketRef.current?.emit('mode:switch', {
+        sessionId,
+        mode: newMode,
+        userId: socketRef.current?.id
+      });
+
+      if (newMode === 'pixel') {
+        // Stop screen sharing when entering Pixel mode
+        setIsRecording(false);
+        toast.info('Switched to Pixel mode - Screen sharing paused', { icon: '🎨' });
+      } else {
+        // Resume screen sharing when entering Debug mode
+        setIsRecording(true);
+        toast.info('Switched to Debug mode - Screen sharing resumed', { icon: '🔧' });
+      }
+    }
+  };
+
   const triggerColorPicker = () => colorInputRef.current?.click();
 
   return (
@@ -916,8 +1034,8 @@ export default function LiveWorkspace({ params }: PageProps) {
             animate={{ x: mode === "debug" ? 0 : 100 }}
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
           />
-          <button onClick={() => setMode("debug")} className={`relative z-10 w-25 py-1.5 text-xs rounded-full flex items-center justify-center gap-2 ${mode === 'debug' ? 'text-cyan-400' : 'text-slate-500'}`}><Terminal size={14} /> Debug</button>
-          <button onClick={() => setMode("pixel")} className={`relative z-10 w-25 py-1.5 text-xs rounded-full flex items-center justify-center gap-2 ${mode === 'pixel' ? 'text-pink-400' : 'text-slate-500'}`}><Paintbrush size={14} /> Pixel</button>
+          <button onClick={() => handleModeSwitch("debug")} className={`relative z-10 w-25 py-1.5 text-xs rounded-full flex items-center justify-center gap-2 ${mode === 'debug' ? 'text-cyan-400' : 'text-slate-500'}`}><Terminal size={14} /> Debug</button>
+          <button onClick={() => handleModeSwitch("pixel")} className={`relative z-10 w-25 py-1.5 text-xs rounded-full flex items-center justify-center gap-2 ${mode === 'pixel' ? 'text-pink-400' : 'text-slate-500'}`}><Paintbrush size={14} /> Pixel</button>
         </div>
 
         <div className="flex items-center gap-4">
@@ -927,13 +1045,12 @@ export default function LiveWorkspace({ params }: PageProps) {
           <UserButton />
 
           {role && (
-            <div className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border flex items-center gap-2 ${
-                role === 'host' 
-                ? 'bg-violet-500/10 text-violet-400 border-violet-500/20' 
-                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-            }`}>
-                {role === 'host' ? <Eye size={14} /> : <Monitor size={14} />}
-                {role === 'host' ? 'Host (Viewing)' : 'Guest (Sharing)'}
+            <div className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border flex items-center gap-2 ${role === 'host'
+              ? 'bg-violet-500/10 text-violet-400 border-violet-500/20'
+              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              }`}>
+              {role === 'host' ? <Eye size={14} /> : <Monitor size={14} />}
+              {role === 'host' ? 'Host (Viewing)' : 'Guest (Sharing)'}
             </div>
           )}
 

@@ -83,7 +83,6 @@ io.on('connection', (socket) => {
   });
 
   // --- ROLE MANAGEMENT ---
-  
   socket.on('role:claim-guest', (sessionId) => {
     if (!sessionState[sessionId]) sessionState[sessionId] = {};
 
@@ -95,13 +94,13 @@ io.on('connection', (socket) => {
 
     // Grant Role
     sessionState[sessionId].guestSocketId = socket.id;
-    
-    io.to(sessionId).emit('role:update', { 
-      role: 'guest', 
-      status: 'taken', 
-      userId: socket.id 
+
+    io.to(sessionId).emit('role:update', {
+      role: 'guest',
+      status: 'taken',
+      userId: socket.id
     });
-    
+
     // Confirm to sender
     socket.emit('role:granted', 'guest');
   });
@@ -109,12 +108,12 @@ io.on('connection', (socket) => {
   socket.on('role:release-guest', (sessionId) => {
     if (sessionState[sessionId]?.guestSocketId === socket.id) {
       delete sessionState[sessionId].guestSocketId;
-      
+
       // Broadcast to everyone: "Guest role is now FREE"
-      io.to(sessionId).emit('role:update', { 
-        role: 'guest', 
-        status: 'free', 
-        userId: null 
+      io.to(sessionId).emit('role:update', {
+        role: 'guest',
+        status: 'free',
+        userId: null
       });
     }
   });
@@ -175,17 +174,24 @@ io.on('connection', (socket) => {
 
   // --- SCROLL SYNC ---
   socket.on('pixel:scroll', relay('pixel:scroll'));
+  socket.on('pixel:mode', relay('pixel:mode'));
   socket.on('privacy:sync', (data) => socket.to(data.sessionId).emit('privacy:sync', data));
   socket.on('rrweb:batch', relay('rrweb:batch'));
+
+  // --- MODE SYNC (Guest -> Host) ---
+  socket.on('mode:switch', (data) => {
+    console.log(`[MODE] User ${socket.id} switched to ${data.mode} in session ${data.sessionId}`);
+    socket.to(data.sessionId).emit('mode:switch', data);
+  });
 
   socket.on('disconnect', () => {
     for (const [sessionId, state] of Object.entries(sessionState)) {
       if (state.guestSocketId === socket.id) {
         delete state.guestSocketId;
-        io.to(sessionId).emit('role:update', { 
-          role: 'guest', 
-          status: 'free', 
-          userId: null 
+        io.to(sessionId).emit('role:update', {
+          role: 'guest',
+          status: 'free',
+          userId: null
         });
         console.log(`Guest ${socket.id} disconnected, role freed for session ${sessionId}`);
       }
