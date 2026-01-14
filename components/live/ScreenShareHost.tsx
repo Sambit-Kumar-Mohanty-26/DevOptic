@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Socket } from "socket.io-client";
+import { ShieldAlert } from "lucide-react";
 
 interface ScreenShareHostProps {
     sessionId: string;
@@ -27,6 +28,7 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
     
     const [status, setStatus] = useState<"waiting" | "connecting" | "streaming">("waiting");
     const [resolution, setResolution] = useState({ width: 0, height: 0 });
+    const [privacyMode, setPrivacyMode] = useState(false);
 
     const cleanup = useCallback(() => {
         if (peerConnectionRef.current) {
@@ -192,10 +194,15 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
         socket.on("webrtc:offer", handleOffer);
         socket.on("webrtc:ice-candidate", handleIceCandidate);
         socket.on("webrtc:stop", handleStop);
+        socket.on('privacy:sync', (data: { active: boolean }) => {
+            console.log("Privacy Mode:", data.active);
+            setPrivacyMode(data.active);
+        });
         return () => {
             socket.off("webrtc:offer", handleOffer);
             socket.off("webrtc:ice-candidate", handleIceCandidate);
             socket.off("webrtc:stop", handleStop);
+            socket.off('privacy:sync');
             cleanup();
         };
     }, [socket, sessionId, cleanup]);
@@ -212,6 +219,18 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
                 <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-slate-900">
                     <div className="w-16 h-16 border-4 border-violet-500/20 rounded-full border-t-violet-500 animate-spin mb-4" />
                     <p className="text-slate-500 text-sm">Waiting for Guest Stream...</p>
+                </div>
+            )}
+            {privacyMode && (
+                <div className="absolute inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center border border-red-500/20 m-1 rounded-xl">
+                    <div className="bg-red-500/10 p-4 rounded-full mb-4 animate-pulse">
+                        <ShieldAlert size={48} className="text-red-500" />
+                    </div>
+                    <h3 className="text-xl font-bold text-white mb-2">Sensitive Input Detected</h3>
+                    <p className="text-slate-400 text-sm max-w-xs text-center">
+                        The user is currently entering confidential information (Password/Email). 
+                        Screen share is paused for security.
+                    </p>
                 </div>
             )}
             <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-contain ${hasControl ? 'cursor-none' : ''}`} style={{ opacity: status === "streaming" ? 1 : 0 }} onClick={handleClick} onMouseMove={hasControl ? handleMouseMove : undefined} />

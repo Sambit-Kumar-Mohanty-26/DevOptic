@@ -62,11 +62,36 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
                 }
             },
             // Capture all events for real-time mirroring
-            checkoutEveryNms: 5000, // Full snapshot every 5 seconds
+            checkoutEveryNms: 5000,
             blockClass: "devoptic-block",
+            maskTextClass: "devoptic-mask", 
             maskInputOptions: {
-                password: true, // Mask password inputs
+                password: true,
+                email: true,
+                tel: true,
+                color: false,
+                date: false,
+                "datetime-local": false,
+                time: false,
+                month: false,
+                number: false,
+                range: false,
+                search: false,
+                text: false,
+                url: false,
+                week: false,
+                textarea: false,
+                select: false,
             },
+
+            maskTextFn: (text: string) => {
+                const ccRegex = /\b(?:\d[ -]*?){13,16}\b/g;
+                
+                if (ccRegex.test(text)) {
+                    return text.replace(ccRegex, '****-****-****-****');
+                }
+                return text;
+            }
         });
 
         if (stopFn) {
@@ -78,8 +103,6 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
 
         const handleSnapshotRequest = (data: { requestorId: string }) => {
             console.log("[GuestRecorder] Received snapshot request from:", data.requestorId);
-            // This forces rrweb to create a 'Full Snapshot' event immediately.
-            // It will automatically pass through your existing 'emit' function defined above!
             record.takeFullSnapshot(true); 
         };
 

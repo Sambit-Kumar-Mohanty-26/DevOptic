@@ -111,6 +111,50 @@ const getInjectedScript = (socketUrl: string) => `
         }
       }
       
+      // --- PRIVACY GUARD (Detects Sensitive Inputs) ---
+      const SENSITIVE_REGEX = /pass|secret|card|cc|cvv|token|auth|login|user|mail|identifier/i;
+      
+      function checkPrivacy(target) {
+         if (!target) return;
+
+         const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+         if (!isInput) return;
+
+         const type = (target.type || '').toLowerCase();
+         const name = (target.name || '').toLowerCase();
+         const id = (target.id || '').toLowerCase();
+         
+         const isSensitive = 
+            type === 'password' || 
+            type === 'email' || 
+            type === 'tel' ||
+            SENSITIVE_REGEX.test(name) || 
+            SENSITIVE_REGEX.test(id);
+
+         if (isSensitive) {
+             console.log('[DevOptic] Privacy Mode Triggered by:', name || type);
+             window.parent.postMessage({ type: 'DEVOPTIC_PRIVACY', payload: { active: true } }, '*');
+         }
+      }
+
+      document.addEventListener('focusin', function(e) {
+         checkPrivacy(e.target);
+      }, true);
+
+      document.addEventListener('focusout', function(e) {
+
+         setTimeout(() => {
+             const active = document.activeElement;
+             // If the new element is NOT sensitive, turn off privacy
+             if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA')) {
+                 window.parent.postMessage({ type: 'DEVOPTIC_PRIVACY', payload: { active: false } }, '*');
+             } else {
+                 // Double check the new element
+                 checkPrivacy(active);
+             }
+         }, 100);
+      }, true);
+      
       var sessionId = 'session-1';
       try {
         if (window.parent !== window) {

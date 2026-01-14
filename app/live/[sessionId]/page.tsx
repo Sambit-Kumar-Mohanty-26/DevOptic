@@ -51,6 +51,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [hasControl, setHasControl] = useState(false);
   const [controlGranted, setControlGranted] = useState(false);
   const [isGuestTaken, setIsGuestTaken] = useState(false);
+  const [isPrivacyActive, setIsPrivacyActive] = useState(false);
   const { getToken } = useAuth();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -821,6 +822,26 @@ export default function LiveWorkspace({ params }: PageProps) {
       }
     };
   }, [activeTool, pixelSubMode, sessionId]);
+
+  useEffect(() => {
+    const handlePrivacyMessage = (event: MessageEvent) => {
+      // Listen for the 'DEVOPTIC_PRIVACY' message from the proxy script
+      if (event.data?.type === 'DEVOPTIC_PRIVACY') {
+        const isActive = event.data.payload.active;
+        
+        // Only emit if state actually changed (prevents infinite loops)
+        if (isActive !== isPrivacyActive) {
+            setIsPrivacyActive(isActive);
+            socketRef.current?.emit('privacy:sync', { sessionId, active: isActive });
+            
+            if (isActive) toast("Sensitive Input Detected - Screen Masked");
+        }
+      }
+    };
+    
+    window.addEventListener('message', handlePrivacyMessage);
+    return () => window.removeEventListener('message', handlePrivacyMessage);
+  }, [sessionId, isPrivacyActive]); 
 
   // --- SCROLL SYNC HANDLER ---
   useEffect(() => {
