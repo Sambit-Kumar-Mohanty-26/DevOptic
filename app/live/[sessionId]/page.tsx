@@ -26,6 +26,7 @@ import { NetworkCapture } from "@/components/live/NetworkCapture";
 import { RemoteNetwork } from "@/components/live/RemoteNetwork";
 import { RemoteControlRequest } from "@/components/live/RemoteControlRequest";
 import { CursorControl } from "@/components/live/CursorControl";
+import { getSessionRole } from "@/app/actions"; 
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -45,10 +46,11 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [role, setRole] = useState<"guest" | "host" | null>(null);
+  const [role, setRole] = useState<"guest" | "host" | null>(null); 
   const [isRecording, setIsRecording] = useState(false);
-  const [hasControl, setHasControl] = useState(false); // Host has control over Guest
-  const [controlGranted, setControlGranted] = useState(false); // Guest has granted control
+  const [hasControl, setHasControl] = useState(false);
+  const [controlGranted, setControlGranted] = useState(false);
+  const [isGuestTaken, setIsGuestTaken] = useState(false);
   const { getToken } = useAuth();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -87,10 +89,10 @@ export default function LiveWorkspace({ params }: PageProps) {
   useEffect(() => {
     const initSocket = async () => {
       try {
-        // 1. Get the Security Token from Clerk
+        // Get the Security Token from Clerk
         const token = await getToken();
 
-        // 2. Connect with the token
+        // Connect with the token
         const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
 
         const socket = io(socketUrl, {
@@ -100,7 +102,38 @@ export default function LiveWorkspace({ params }: PageProps) {
         });
         socketRef.current = socket;
 
-        // 3. Handle Auth Errors
+        socket.on('role:state', (data) => {
+          setIsGuestTaken(data.guestTaken);
+        });
+
+        socket.on('role:update', (data) => {
+          if (data.role === 'guest') {
+            const isTaken = data.status === 'taken';
+            setIsGuestTaken(isTaken);
+            
+            if (isTaken && data.userId !== socket.id && role === 'guest') {
+              setRole(null); 
+              setIsRecording(false);
+              toast.warning("Another user took the Guest role.");
+            }
+          }
+        });
+
+        socket.on('role:error', (msg) => {
+          toast.error(msg);
+          if (role === 'guest') {
+            setRole(null);
+            setIsRecording(false);
+          }
+        });
+
+        socket.on('role:granted', () => {
+          setRole("guest"); 
+          setIsRecording(true); 
+          toast.success("Started screen sharing");
+        });
+
+        // Handle Auth Errors
         socket.on("connect_error", (err) => {
           console.error("Socket connection failed:", err.message);
           toast.error("Connection failed: Unauthorized");
@@ -335,6 +368,34 @@ export default function LiveWorkspace({ params }: PageProps) {
     }, 30),
     [sessionId]
   );
+
+  useEffect(() => {
+    const assignRole = async () => {
+      try {
+        const result = await getSessionRole(sessionId);
+        
+        if (result.error) {
+            toast.error(result.error);
+            return;
+        }
+
+        if (result.role === 'host') {
+            console.log("[AutoRole] User is HOST");
+            setRole("host");
+            setIsRecording(false); // Host doesn't record, they watch
+        } else {
+            console.log("[AutoRole] User is GUEST");
+            setRole("guest");
+            setIsRecording(true); // Guest starts recording Immediately
+            toast.success("Joined as Guest - Sharing Screen");
+        }
+      } catch (err) {
+        console.error("Failed to assign role:", err);
+      }
+    };
+
+    assignRole();
+  }, [sessionId]);
 
   useEffect(() => {
     if (!containerRef.current || !canvasRef.current) return;
@@ -673,10 +734,9 @@ export default function LiveWorkspace({ params }: PageProps) {
     }
   }, [activeTool, activeColor, brushSize, sessionId]);
 
-  // --- FINAL MAGIC BRUSH LOGIC ---
+  // --- MAGIC BRUSH LOGIC ---
   useEffect(() => {
     const handleIframeMessage = (event: MessageEvent) => {
-      // 1. Strict Filters
       if (
         event.data?.type !== 'DEVOPTIC_HOVER' ||
         activeTool !== 'magic' ||
@@ -687,17 +747,17 @@ export default function LiveWorkspace({ params }: PageProps) {
       const canvas = fabricCanvas.current;
       if (!canvas) return;
 
-      // 2. CRITICAL: Recalculate Canvas Offset
+      // Recalculate Canvas Offset
       // If the UI (sidebar/header) shifted after load, Fabric's internal (0,0) is wrong.
       // This forces it to re-check where it is on the screen.
       canvas.calcOffset();
 
-      // 3. Remove old highlight
+      // Remove old highlight
       canvas.getObjects().forEach((obj: any) => {
         if (obj.id === 'magic-highlight') canvas.remove(obj);
       });
 
-      // 4. Draw Precise Box
+      // Draw Precise Box
       // Fabric strokes are drawn 50% inside, 50% outside. 
       // We offset by half the stroke width to ensure the box hugs the element exactly.
       const strokeWidth = 2;
@@ -723,7 +783,7 @@ export default function LiveWorkspace({ params }: PageProps) {
       canvas.add(highlight);
       canvas.requestRenderAll();
 
-      // 5. Emit PERCENTAGE coordinates
+      // Emit PERCENTAGE coordinates
       // This ensures that if the guest has a different window width (responsive layout),
       // the highlight stays relative to the element's position on *their* screen.
       const cvsW = canvas.width || 1;
@@ -846,29 +906,19 @@ export default function LiveWorkspace({ params }: PageProps) {
           </button>
           <UserButton />
 
-          {/* Role Selector */}
-          <div className="p-1 bg-slate-900 border border-white/10 rounded-full flex relative">
-            <motion.div
-              className={`absolute top-1 bottom-1 w-20 rounded-full z-0 ${role === 'guest' ? 'bg-emerald-900/50' : role === 'host' ? 'bg-violet-900/50' : 'bg-slate-800/50'}`}
-              animate={{ x: role === "guest" ? 0 : role === "host" ? 80 : 40 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            />
-            <button
-              onClick={() => { setRole("guest"); setIsRecording(true); toast.success("Started screen sharing"); }}
-              className={`relative z-10 w-20 py-1.5 text-xs rounded-full flex items-center justify-center gap-1.5 ${role === 'guest' ? 'text-emerald-400' : 'text-slate-500'}`}
-            >
-              <Monitor size={12} /> Guest
-            </button>
-            <button
-              onClick={() => { setRole("host"); setIsRecording(false); toast.success("Watching as host"); }}
-              className={`relative z-10 w-20 py-1.5 text-xs rounded-full flex items-center justify-center gap-1.5 ${role === 'host' ? 'text-violet-400' : 'text-slate-500'}`}
-            >
-              <Eye size={12} /> Host
-            </button>
-          </div>
+          {role && (
+            <div className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider border flex items-center gap-2 ${
+                role === 'host' 
+                ? 'bg-violet-500/10 text-violet-400 border-violet-500/20' 
+                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+            }`}>
+                {role === 'host' ? <Eye size={14} /> : <Monitor size={14} />}
+                {role === 'host' ? 'Host (Viewing)' : 'Guest (Sharing)'}
+            </div>
+          )}
 
           {/* Recording Indicator */}
-          {role === "guest" && isRecording && (
+          {isRecording && (
             <div className="flex items-center gap-2 bg-red-500/20 border border-red-500/30 px-3 py-1.5 rounded-full">
               <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
               <span className="text-[10px] font-bold text-red-400 uppercase tracking-wider">REC</span>
@@ -980,7 +1030,6 @@ export default function LiveWorkspace({ params }: PageProps) {
               )}
 
               {/* WebRTC Screen Share for Host - real-time video stream */}
-              {/* WebRTC Screen Share for Host - real-time video stream (Debug Mode only) */}
               {role === 'host' && mode === 'debug' && (
                 <div className="absolute inset-0 z-10">
                   <ScreenShareHost sessionId={sessionId} socket={socketRef.current} hasControl={hasControl} />

@@ -1,8 +1,32 @@
 "use server";
 
 import { auth, currentUser } from "@clerk/nextjs/server";
-import { prisma } from "@/lib/db"; // <--- Import from lib/db, DO NOT use new PrismaClient() here
+import { prisma } from "@/lib/db"; 
 import { redirect } from "next/navigation";
+
+export async function getSessionRole(sessionId: string) {
+  const { userId } = await auth();
+  
+  if (!userId) {
+    return { error: "Unauthorized" };
+  }
+
+  const session = await prisma.liveSession.findUnique({
+    where: { id: sessionId },
+    select: { hostId: true }
+  });
+
+  if (!session) {
+    return { error: "Session not found" };
+  }
+
+  const isHost = session.hostId === userId;
+
+  return { 
+    role: isHost ? "host" : "guest",
+    userId 
+  };
+}
 
 export async function createSession() {
   const { userId } = await auth();
@@ -12,7 +36,6 @@ export async function createSession() {
     throw new Error("Unauthorized");
   }
 
-  // Create a new session in Postgres
   const session = await prisma.liveSession.create({
     data: {
       type: "DEBUG",

@@ -27,6 +27,8 @@ const io = new Server(server, {
   }
 });
 
+const sessionState = {};
+
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error("Authentication error: No token provided"));
@@ -71,7 +73,52 @@ io.on('connection', (socket) => {
     if (!sessionId || typeof sessionId !== 'string') return;
     socket.join(sessionId);
     console.log(`User ${socket.id} joined room: ${sessionId}`);
+
+    const currentGuest = sessionState[sessionId]?.guestSocketId;
+    if (currentGuest) {
+      socket.emit('role:state', { guestTaken: true, guestId: currentGuest });
+    } else {
+      socket.emit('role:state', { guestTaken: false, guestId: null });
+    }
   });
+
+  // --- ROLE MANAGEMENT ---
+  
+  socket.on('role:claim-guest', (sessionId) => {
+    if (!sessionState[sessionId]) sessionState[sessionId] = {};
+
+    // If already taken by someone else
+    if (sessionState[sessionId].guestSocketId && sessionState[sessionId].guestSocketId !== socket.id) {
+      socket.emit('role:error', 'Guest role is already taken by another user.');
+      return;
+    }
+
+    // Grant Role
+    sessionState[sessionId].guestSocketId = socket.id;
+    
+    io.to(sessionId).emit('role:update', { 
+      role: 'guest', 
+      status: 'taken', 
+      userId: socket.id 
+    });
+    
+    // Confirm to sender
+    socket.emit('role:granted', 'guest');
+  });
+
+  socket.on('role:release-guest', (sessionId) => {
+    if (sessionState[sessionId]?.guestSocketId === socket.id) {
+      delete sessionState[sessionId].guestSocketId;
+      
+      // Broadcast to everyone: "Guest role is now FREE"
+      io.to(sessionId).emit('role:update', { 
+        role: 'guest', 
+        status: 'free', 
+        userId: null 
+      });
+    }
+  });
+
 
   const relay = (event) => (data) => socket.to(data.sessionId).emit(event, data);
   const relayObj = (event) => (data) => socket.to(data.sessionId).emit(event, data.object);
@@ -129,7 +176,20 @@ io.on('connection', (socket) => {
   // --- SCROLL SYNC ---
   socket.on('pixel:scroll', relay('pixel:scroll'));
 
-  socket.on('disconnect', () => console.log('User disconnected:', socket.id));
+  socket.on('disconnect', () => {
+    for (const [sessionId, state] of Object.entries(sessionState)) {
+      if (state.guestSocketId === socket.id) {
+        delete state.guestSocketId;
+        io.to(sessionId).emit('role:update', { 
+          role: 'guest', 
+          status: 'free', 
+          userId: null 
+        });
+        console.log(`Guest ${socket.id} disconnected, role freed for session ${sessionId}`);
+      }
+    }
+    console.log('User disconnected:', socket.id);
+  });
 });
 
 server.listen(PORT, () => {
