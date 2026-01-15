@@ -11,6 +11,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 const FRONTEND_ORIGIN = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
+const CLERK_ISSUER = process.env.CLERK_ISSUER_URL;
 
 app.use(cors({
   origin: FRONTEND_ORIGIN,
@@ -37,6 +38,11 @@ io.use((socket, next) => {
   if (!decoded || !decoded.payload || !decoded.payload.iss) {
     console.error("Auth Failed: Could not decode token issuer");
     return next(new Error("Authentication error: Malformed token"));
+  }
+
+  if (CLERK_ISSUER && !decoded.payload.iss.startsWith(CLERK_ISSUER)) {
+     console.error(`Blocked malicious issuer: ${decoded.payload.iss}`);
+     return next(new Error("Authentication error: Invalid Issuer"));
   }
 
   const client = jwksClient({
@@ -74,6 +80,8 @@ io.on('connection', (socket) => {
     socket.join(sessionId);
     console.log(`User ${socket.id} joined room: ${sessionId}`);
 
+    if (!sessionState[sessionId]) sessionState[sessionId] = { guestSocketId: null, controllerSocketId: null };
+
     const currentGuest = sessionState[sessionId]?.guestSocketId;
     if (currentGuest) {
       socket.emit('role:state', { guestTaken: true, guestId: currentGuest });
@@ -82,7 +90,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // --- ROLE MANAGEMENT ---
+  // --- Role Management ---
   socket.on('role:claim-guest', (sessionId) => {
     if (!sessionState[sessionId]) sessionState[sessionId] = {};
 
@@ -137,7 +145,13 @@ io.on('connection', (socket) => {
   // --- LATE JOINER SNAPSHOT LOGIC ---
   socket.on('rrweb:request-snapshot', (sessionId) => {
     console.log(`[RRWEB] User ${socket.id} requesting snapshot for ${sessionId}`);
-    socket.to(sessionId).emit('rrweb:request-snapshot', { requestorId: socket.id });
+    const guestId = sessionState[sessionId]?.guestSocketId;
+     if (guestId) {
+        io.to(guestId).emit('rrweb:request-snapshot', { requestorId: socket.id });
+     } else {
+        // Fallback broadcast if state missing
+        socket.to(sessionId).emit('rrweb:request-snapshot', { requestorId: socket.id });
+     }
   });
 
   socket.on('rrweb:snapshot', (data) => {
@@ -162,11 +176,37 @@ io.on('connection', (socket) => {
   socket.on('network:request', relay('network:request'));
 
   // --- REMOTE CONTROL ---
+  socket.on('control:grant', (data) => {
+     // Only the current Guest can grant control
+     if (sessionState[data.sessionId]?.guestSocketId === socket.id) {
+         sessionState[data.sessionId].controllerSocketId = data.targetUserId;
+         io.to(data.sessionId).emit('control:grant', data);
+         console.log(`Control granted to ${data.targetUserId} in ${data.sessionId}`);
+     }
+  });
+
+  //  Guest Revokes Control
+  socket.on('control:revoke', (data) => {
+     if (sessionState[data.sessionId]?.guestSocketId === socket.id) {
+         sessionState[data.sessionId].controllerSocketId = null;
+         io.to(data.sessionId).emit('control:revoke', data);
+     }
+  });
+
+  // Host Sends Control Commands (Cursor/Scroll/Click)
+  // We check if the sender is the authorized controller
+  socket.on('control:cursor', (data) => {
+      const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
+      
+      if (socket.id === authorizedController) {
+          socket.to(data.sessionId).emit('control:cursor', data);
+      } else {
+          console.warn(`Unauthorized control attempt from ${socket.id}`);
+      }
+  });
+
   socket.on('control:request', relay('control:request'));
-  socket.on('control:grant', relay('control:grant'));
   socket.on('control:deny', relay('control:deny'));
-  socket.on('control:revoke', relay('control:revoke'));
-  socket.on('control:cursor', relay('control:cursor'));
 
   // --- MAGIC BRUSH SYNC ---
   socket.on('magic:highlight', relay('magic:highlight'));
@@ -187,7 +227,8 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     for (const [sessionId, state] of Object.entries(sessionState)) {
       if (state.guestSocketId === socket.id) {
-        delete state.guestSocketId;
+        state.guestSocketId = null;
+        state.controllerSocketId = null;
         io.to(sessionId).emit('role:update', {
           role: 'guest',
           status: 'free',
@@ -195,6 +236,9 @@ io.on('connection', (socket) => {
         });
         console.log(`Guest ${socket.id} disconnected, role freed for session ${sessionId}`);
       }
+       if (state.controllerSocketId === socket.id) {
+        state.controllerSocketId = null;
+       }
     }
     console.log('User disconnected:', socket.id);
   });

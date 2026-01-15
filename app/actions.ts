@@ -13,11 +13,15 @@ export async function getSessionRole(sessionId: string) {
 
   const session = await prisma.liveSession.findUnique({
     where: { id: sessionId },
-    select: { hostId: true }
+    select: { hostId: true, active: true }
   });
 
   if (!session) {
     return { error: "Session not found" };
+  }
+
+  if (!session.active) {
+      return { error: "This session has ended." };
   }
 
   const isHost = session.hostId === userId;
