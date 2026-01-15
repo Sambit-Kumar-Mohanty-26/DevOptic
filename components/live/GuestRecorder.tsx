@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { record } from "rrweb";
 import pako from "pako";
 import type { Socket } from "socket.io-client";
+import { toast } from "sonner";
 
 interface GuestRecorderProps {
     sessionId: string;
@@ -22,20 +23,18 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
 
     const eventBuffer = useRef<any[]>([]);
     const intervalRef = useRef<NodeJS.Timeout | null>(null);
+    const hasErrorRef = useRef(false);
 
     useEffect(() => {
         if (!socket || !isRecording) {
-            // Cleanup if recording stops
             if (stopRecordingRef.current) {
                 stopRecordingRef.current();
                 stopRecordingRef.current = null;
             }
-            // Cleanup batch interval
             if (intervalRef.current) {
                 clearInterval(intervalRef.current);
                 intervalRef.current = null;
             }
-            // Restore console
             if (consoleOverridesRef.current) {
                 console.log = consoleOverridesRef.current.log;
                 console.warn = consoleOverridesRef.current.warn;
@@ -47,13 +46,13 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
         }
 
         console.log("[GuestRecorder] Starting Batched rrweb recording for session:", sessionId);
+        hasErrorRef.current = false;
 
         // The Batch Flush Loop
         intervalRef.current = setInterval(() => {
             if (eventBuffer.current.length === 0) return;
 
             try {
-                // Compress the Entire batch at once
                 const payload = JSON.stringify(eventBuffer.current);
                 const compressed = pako.deflate(payload);
                 const CHUNK_SIZE = 0x8000;
@@ -64,68 +63,82 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
                 }
                 const base64 = btoa(result);
 
-                // Emit as a 'batch' event
                 socket.emit("rrweb:batch", {
                     sessionId,
                     batch: base64,
                     timestamp: Date.now(),
                 });
                 
+                hasErrorRef.current = false; 
                 eventBuffer.current = [];
             } catch (err) {
                 console.error("[GuestRecorder] Failed to emit batch:", err);
+                
+                if (!hasErrorRef.current) {
+                    toast.error("Recording Error: Failed to send data. Check connection.");
+                    hasErrorRef.current = true;
+                }
+                
                 eventBuffer.current = [];
             }
         }, 500);
 
         // --- RRWEB RECORDING ---
-        const stopFn = record({
-            emit(event) {
-                eventBuffer.current.push(event);
-            },
-            // Capture all events for real-time mirroring
-            checkoutEveryNms: 5000,
-            blockClass: "devoptic-block",
-            maskTextClass: "devoptic-mask", 
-            maskInputOptions: {
-                password: true,
-                email: true,
-                tel: true,
-                color: false,
-                date: false,
-                "datetime-local": false,
-                time: false,
-                month: false,
-                number: false,
-                range: false,
-                search: false,
-                text: false,
-                url: false,
-                week: false,
-                textarea: false,
-                select: false,
-            },
-
-            maskTextFn: (text: string) => {
-                const ccRegex = /\b(?:\d[ -]*?){13,16}\b/g;
-                
-                if (ccRegex.test(text)) {
-                    return text.replace(ccRegex, '****-****-****-****');
+        try {
+            const stopFn = record({
+                emit(event) {
+                    eventBuffer.current.push(event);
+                },
+                checkoutEveryNms: 5000,
+                blockClass: "devoptic-block",
+                maskTextClass: "devoptic-mask", 
+                maskInputOptions: {
+                    password: true,
+                    email: true,
+                    tel: true,
+                    color: false,
+                    date: false,
+                    "datetime-local": false,
+                    time: false,
+                    month: false,
+                    number: false,
+                    range: false,
+                    search: false,
+                    text: false,
+                    url: false,
+                    week: false,
+                    textarea: false,
+                    select: false,
+                },
+                maskTextFn: (text: string) => {
+                    const ccRegex = /\b(?:\d[ -]*?){13,16}\b/g;
+                    if (ccRegex.test(text)) {
+                        return text.replace(ccRegex, '****-****-****-****');
+                    }
+                    return text;
                 }
-                return text;
-            }
-        });
+            });
 
-        if (stopFn) {
-            stopRecordingRef.current = stopFn;
-            console.log("[GuestRecorder] Recording started successfully");
-        } else {
-            console.error("[GuestRecorder] Failed to start recording - stopFn is undefined");
+            if (stopFn) {
+                stopRecordingRef.current = stopFn;
+                console.log("[GuestRecorder] Recording started successfully");
+            } else {
+                // Manually throw if stopFn is undefined
+                throw new Error("rrweb returned undefined stop function");
+            }
+        } catch (err) {
+            console.error("[GuestRecorder] Failed to start recording:", err);
+            toast.error("Failed to initialize screen recording. Please refresh.");
         }
 
         const handleSnapshotRequest = (data: { requestorId: string }) => {
             console.log("[GuestRecorder] Received snapshot request from:", data.requestorId);
-            record.takeFullSnapshot(true); 
+            try {
+                record.takeFullSnapshot(true);
+            } catch (err) {
+                console.error("Snapshot failed:", err);
+                toast.error("Sync Error: Failed to generate snapshot.");
+            }
         };
 
         socket.on('rrweb:request-snapshot', handleSnapshotRequest);
@@ -159,43 +172,23 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
         };
 
         console.log = (...args: unknown[]) => {
-            socket.emit("console:log", {
-                sessionId,
-                args: serializeArgs(args),
-                timestamp: Date.now(),
-            });
+            socket.emit("console:log", { sessionId, args: serializeArgs(args), timestamp: Date.now() });
             originalLog.apply(console, args);
         };
-
         console.warn = (...args: unknown[]) => {
-            socket.emit("console:warn", {
-                sessionId,
-                args: serializeArgs(args),
-                timestamp: Date.now(),
-            });
+            socket.emit("console:warn", { sessionId, args: serializeArgs(args), timestamp: Date.now() });
             originalWarn.apply(console, args);
         };
-
         console.error = (...args: unknown[]) => {
-            socket.emit("console:error", {
-                sessionId,
-                args: serializeArgs(args),
-                timestamp: Date.now(),
-            });
+            socket.emit("console:error", { sessionId, args: serializeArgs(args), timestamp: Date.now() });
             originalError.apply(console, args);
         };
-
         console.info = (...args: unknown[]) => {
-            socket.emit("console:info", {
-                sessionId,
-                args: serializeArgs(args),
-                timestamp: Date.now(),
-            });
+            socket.emit("console:info", { sessionId, args: serializeArgs(args), timestamp: Date.now() });
             originalInfo.apply(console, args);
         };
 
         return () => {
-            // Cleanup on unmount
             console.log("[GuestRecorder] Stopping recording");
             socket.off('rrweb:request-snapshot', handleSnapshotRequest);           
             if (stopRecordingRef.current) {

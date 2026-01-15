@@ -52,6 +52,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [controlGranted, setControlGranted] = useState(false);
   const [isGuestTaken, setIsGuestTaken] = useState(false);
   const [isPrivacyActive, setIsPrivacyActive] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
   const { getToken } = useAuth();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -104,6 +105,24 @@ export default function LiveWorkspace({ params }: PageProps) {
           reconnectionDelay: 1000,
         });
         socketRef.current = socket;
+
+        socket.on("connect", () => {
+            console.log("Socket Connected");
+            setIsConnected(true);
+            // Optional: toast.success("Connected to server");
+        });
+
+         socket.on("connect", () => {
+            console.log("Socket Connected");
+            setIsConnected(true);
+            toast.success("Connected to server");
+        });
+
+        socket.on("disconnect", (reason) => {
+            console.warn("Socket Disconnected:", reason);
+            setIsConnected(false);
+            toast.error("Connection lost. Reconnecting...");
+        });
 
         socket.on('role:state', (data) => {
           setIsGuestTaken(data.guestTaken);
@@ -1039,9 +1058,16 @@ export default function LiveWorkspace({ params }: PageProps) {
         </div>
 
         <div className="flex items-center gap-4">
-          <button onClick={copyInvite} className="flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-lg text-xs font-medium hover:bg-white/10 transition-all">
-            {copied ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />} {copied ? "Copied" : "Invite"}
-          </button>
+          {role === 'host' && (
+            <button 
+              onClick={copyInvite} 
+              className="flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-lg text-xs font-medium hover:bg-white/10 transition-all"
+            >
+              {copied ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />} 
+              {copied ? "Copied" : "Invite"}
+            </button>
+          )}
+
           <UserButton />
 
           {role && (
@@ -1122,6 +1148,12 @@ export default function LiveWorkspace({ params }: PageProps) {
         </AnimatePresence>
 
         <main className="flex-1 relative flex items-center justify-center p-4 bg-[#020617]">
+          {!isConnected && (
+            <div className="absolute top-0 left-0 right-0 z-100 bg-red-600/90 backdrop-blur text-white text-xs font-bold text-center py-2 animate-pulse shadow-lg flex items-center justify-center gap-2">
+               <Shield size={14} /> 
+               CONNECTION LOST - ATTEMPTING TO RECONNECT...
+            </div>
+          )}
           <div className="w-full h-full rounded-2xl border border-white/10 shadow-2xl overflow-hidden relative flex flex-col">
             {pixelSubMode === 'overlay' || mode === 'debug' ? (
               <div className="h-12 bg-slate-900/50 border-b border-white/5 flex items-center px-4 gap-4 z-40 relative">
