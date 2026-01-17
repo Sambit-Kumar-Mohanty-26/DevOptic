@@ -27,6 +27,7 @@ import { RemoteNetwork } from "@/components/live/RemoteNetwork";
 import { RemoteControlRequest } from "@/components/live/RemoteControlRequest";
 import { CursorControl } from "@/components/live/CursorControl";
 import { getSessionRole } from "@/app/actions";
+import {TelemetryPanel} from "@/components/live/TelemetryPanel";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -1219,31 +1220,30 @@ export default function LiveWorkspace({ params }: PageProps) {
 
         <AnimatePresence>
           {mode === "debug" && (
-            <motion.aside initial={{ x: 400 }} animate={{ x: 0 }} exit={{ x: 400 }} className="w-96 border-l border-white/5 bg-slate-950/80 backdrop-blur-xl flex flex-col z-40">
+            <motion.aside 
+              initial={{ x: 400 }} 
+              animate={{ x: 0 }} 
+              exit={{ x: 400 }} 
+              className="w-96 border-l border-white/5 bg-slate-950/80 backdrop-blur-xl flex flex-col z-40 h-full" 
+            >
 
-              {/* Telemetry Header */}
-              <div className="p-4 border-b border-white/5 flex items-center justify-between">
-                <span className="text-xs font-bold text-cyan-400 flex items-center gap-2 tracking-widest uppercase"><Cpu size={14} /> Telemetry_Stream</span>
+              <div className="p-4 border-b border-white/5 flex items-center justify-between shrink-0">
+                <span className="text-xs font-bold text-cyan-400 flex items-center gap-2 tracking-widest uppercase">
+                  <Cpu size={14} /> Telemetry_Stream
+                </span>
                 <div className="w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_10px_cyan]" />
               </div>
 
-              {/* System Logs */}
-              <div className="p-4 font-mono text-[10px] space-y-3 border-b border-white/5">
+              <div className="p-4 font-mono text-[10px] space-y-3 border-b border-white/5 shrink-0 max-h-48 overflow-y-auto">
                 <LogEntry type="info" text="PROXY_TUNNEL_ESTABLISHED" />
                 <LogEntry type="success" text="CANVAS_LAYER_MOUNTED" />
                 <LogEntry type="info" text={`WS_STATUS: ${socketRef.current?.connected ? 'CONNECTED' : 'CONNECTING...'}`} />
                 <LogEntry type={role ? "success" : "info"} text={`ROLE: ${role?.toUpperCase() || 'NOT_SELECTED'}`} />
               </div>
 
-              {/* Remote Network - Only for Host */}
               {role === "host" && (
-                <RemoteNetwork sessionId={sessionId} socket={socketRef.current} />
-              )}
-
-              {/* Remote Console - Only for Host */}
-              {role === "host" && (
-                <div className="flex-1 overflow-hidden">
-                  <RemoteConsole sessionId={sessionId} socket={socketRef.current} />
+                <div className="flex-1 overflow-hidden relative">
+                   <TelemetryPanel sessionId={sessionId} socket={socketRef.current} />
                 </div>
               )}
             </motion.aside>

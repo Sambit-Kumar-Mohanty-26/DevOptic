@@ -174,6 +174,7 @@ io.on('connection', (socket) => {
 
   // --- NETWORK TAB STREAMING ---
   socket.on('network:request', relay('network:request'));
+  socket.on('network:replay', (data) => socket.to(data.sessionId).emit('network:replay', data));
 
   // --- REMOTE CONTROL ---
   socket.on('control:grant', (data) => {

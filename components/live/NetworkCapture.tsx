@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Socket } from "socket.io-client";
+import { toast } from "sonner";
 
 interface NetworkCaptureProps {
     sessionId: string;
@@ -9,131 +10,151 @@ interface NetworkCaptureProps {
     isActive: boolean;
 }
 
-interface NetworkRequest {
-    url: string;
-    method: string;
-    status: number;
-    type: string;
-    size: number;
-    duration: number;
-    timestamp: number;
-}
-
 export const NetworkCapture = ({ sessionId, socket, isActive }: NetworkCaptureProps) => {
-    const observerRef = useRef<PerformanceObserver | null>(null);
-    const sentRequestsRef = useRef<Set<string>>(new Set());
+    const isPatchedRef = useRef(false);
 
     useEffect(() => {
         if (!socket || !isActive) return;
+        if (isPatchedRef.current) return;
 
-        console.log("[NetworkCapture] Starting network monitoring");
+        console.log("[NetworkCapture] Initializing Deep Capture...");
+        isPatchedRef.current = true;
 
-        // Use Performance Observer to capture resource timing
-        const observer = new PerformanceObserver((list) => {
-            const entries = list.getEntries();
-
-            entries.forEach((entry) => {
-                if (entry.entryType === "resource") {
-                    const resourceEntry = entry as PerformanceResourceTiming;
-
-                    // Create unique key for this request
-                    const requestKey = `${resourceEntry.name}-${resourceEntry.startTime}`;
-
-                    // Skip if already sent
-                    if (sentRequestsRef.current.has(requestKey)) return;
-                    sentRequestsRef.current.add(requestKey);
-
-                    // Extract URL info
-                    let url = resourceEntry.name;
-                    try {
-                        const urlObj = new URL(url);
-                        url = urlObj.pathname + urlObj.search;
-                    } catch {
-                    }
-
-                    // Determine request type from initiatorType
-                    let type = resourceEntry.initiatorType || "other";
-                    if (type === "xmlhttprequest" || type === "fetch") {
-                        type = "XHR";
-                    } else if (type === "script") {
-                        type = "JS";
-                    } else if (type === "link" || type === "css") {
-                        type = "CSS";
-                    } else if (type === "img") {
-                        type = "IMG";
-                    }
-
-                    const request: NetworkRequest = {
-                        url: url.slice(0, 100), // Truncate long URLs
-                        method: "GET",
-                        status: 200,
-                        type,
-                        size: resourceEntry.transferSize || 0,
-                        duration: Math.round(resourceEntry.duration),
-                        timestamp: Date.now(),
-                    };
-
-                    socket.emit("network:request", {
-                        sessionId,
-                        request,
-                    });
-                }
-            });
-        });
-
-        // Observe resource timing entries
-        try {
-            observer.observe({ entryTypes: ["resource"] });
-            observerRef.current = observer;
-        } catch (err) {
-            console.error("[NetworkCapture] Failed to start observer:", err);
-        }
-
-        // Also capture XHR/Fetch by monkey-patching
         const originalFetch = window.fetch;
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        const originalXHRSend = XMLHttpRequest.prototype.send;
+
+        const tryParse = (data: any) => {
+            try { return JSON.parse(data); } catch { return data; }
+        };
+
+        const emitRequest = (data: any) => {
+            socket.emit("network:request", { sessionId, request: data });
+        };
         window.fetch = async (...args) => {
             const startTime = performance.now();
-            const url = typeof args[0] === "string" ? args[0] : args[0] instanceof Request ? args[0].url : "";
-            const method = typeof args[1]?.method === "string" ? args[1].method : "GET";
+            const [resource, config] = args;
+            const url = typeof resource === 'string' ? resource : resource instanceof Request ? resource.url : '';
+            const method = typeof resource === 'object' && 'method' in resource ? resource.method : (config?.method || 'GET');
+
+            let requestBody = config?.body;
+            if (requestBody && typeof requestBody !== 'string') {
+                requestBody = '[Binary/Stream Data]';
+            }
 
             try {
                 const response = await originalFetch(...args);
+                const clone = response.clone();
                 const endTime = performance.now();
 
-                let displayUrl = url;
-                try {
-                    const urlObj = new URL(url, window.location.origin);
-                    displayUrl = urlObj.pathname + urlObj.search;
-                } catch { }
-
-                const request: NetworkRequest = {
-                    url: displayUrl.slice(0, 100),
-                    method: method.toUpperCase(),
-                    status: response.status,
-                    type: "Fetch",
-                    size: 0,
-                    duration: Math.round(endTime - startTime),
-                    timestamp: Date.now(),
-                };
-
-                socket.emit("network:request", { sessionId, request });
+                clone.text().then((text) => {
+                    emitRequest({
+                        url: url.slice(0, 150),
+                        method: method.toUpperCase(),
+                        status: response.status,
+                        type: "Fetch",
+                        size: text.length,
+                        duration: Math.round(endTime - startTime),
+                        timestamp: Date.now(),
+                        requestHeaders: config?.headers || {},
+                        responseHeaders: Object.fromEntries(response.headers.entries()),
+                        requestBody: tryParse(requestBody),
+                        responseBody: tryParse(text.slice(0, 10000)),
+                    });
+                }).catch(() => {});
 
                 return response;
-            } catch (err) {
+            } catch (err: any) {
+                emitRequest({
+                    url: url.slice(0, 150),
+                    method: method.toUpperCase(),
+                    status: 0,
+                    type: "Fetch",
+                    size: 0,
+                    duration: Math.round(performance.now() - startTime),
+                    timestamp: Date.now(),
+                    error: err.message
+                });
                 throw err;
             }
         };
 
-        return () => {
-            console.log("[NetworkCapture] Stopping network monitoring");
-            if (observerRef.current) {
-                observerRef.current.disconnect();
-                observerRef.current = null;
+        XMLHttpRequest.prototype.open = function (method: string, url: string | URL) {
+            this._method = method;
+            this._url = typeof url === 'string' ? url : url.toString();
+            this._startTime = performance.now();
+            return originalXHROpen.apply(this, arguments as any);
+        };
+
+        XMLHttpRequest.prototype.send = function (body) {
+            this._requestBody = body;
+            
+            this.addEventListener('loadend', () => {
+                const endTime = performance.now();
+                const headerString = this.getAllResponseHeaders() || "";
+                const responseHeaders = headerString.split('\r\n').reduce((acc: any, line) => {
+                    const [key, val] = line.split(': ');
+                    if(key) acc[key] = val;
+                    return acc;
+                }, {});
+
+                let responseBody = this.response;
+                if(this.responseType === '' || this.responseType === 'text') responseBody = this.responseText;
+                if(this.responseType === 'json') responseBody = this.response;
+
+                emitRequest({
+                    url: (this._url || '').slice(0, 150),
+                    method: (this._method || 'GET').toUpperCase(),
+                    status: this.status,
+                    type: "XHR",
+                    size: (typeof responseBody === 'string' ? responseBody.length : 0),
+                    duration: Math.round(endTime - (this._startTime || endTime)),
+                    timestamp: Date.now(),
+                    requestHeaders: {},
+                    responseHeaders: responseHeaders,
+                    requestBody: tryParse(this._requestBody),
+                    responseBody: tryParse(typeof responseBody === 'string' ? responseBody.slice(0, 10000) : '[Binary]'),
+                });
+            });
+
+            return originalXHRSend.apply(this, arguments as any);
+        };
+
+        const handleReplay = async (data: { url: string, method: string, body?: any, headers?: any }) => {
+            console.log("[Network] Replaying Request:", data.url);
+            toast.info(`Replaying ${data.method} ${data.url}`);
+            
+            try {
+                await originalFetch(data.url, {
+                    method: data.method,
+                    headers: data.headers,
+                    body: data.body ? JSON.stringify(data.body) : undefined
+                });
+                toast.success("Replay Successful (Check Network Tab)");
+            } catch (err) {
+                toast.error("Replay Failed");
             }
+        };
+
+        socket.on("network:replay", handleReplay);
+
+        return () => {
             window.fetch = originalFetch;
-            sentRequestsRef.current.clear();
+            XMLHttpRequest.prototype.open = originalXHROpen;
+            XMLHttpRequest.prototype.send = originalXHRSend;
+            socket.off("network:replay", handleReplay);
+            isPatchedRef.current = false;
         };
     }, [socket, sessionId, isActive]);
 
     return null;
 };
+
+declare global {
+    interface XMLHttpRequest {
+        _method?: string;
+        _url?: string;
+        _startTime?: number;
+        _requestBody?: any;
+    }
+}

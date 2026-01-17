@@ -110,8 +110,8 @@ export const RemoteConsole = ({ sessionId, socket }: RemoteConsoleProps) => {
     };
 
     return (
-        <div className="flex flex-col h-full">
-            <div className="p-3 border-b border-white/5 flex items-center justify-between shrink-0">
+        <div className="flex flex-col h-full w-full">
+            <div className="p-3 border-b border-white/5 flex items-center justify-between shrink-0 bg-slate-900">
                 <button
                     onClick={() => setIsExpanded(!isExpanded)}
                     className="flex items-center gap-2 text-xs font-bold text-emerald-400 tracking-widest uppercase hover:text-emerald-300 transition-colors"
@@ -142,12 +142,11 @@ export const RemoteConsole = ({ sessionId, socket }: RemoteConsoleProps) => {
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
-                        className="flex-1 overflow-hidden"
+                        className="flex-1 overflow-hidden min-h-0"
                     >
                         <div
                             ref={scrollRef}
                             className="h-full overflow-y-auto p-2 space-y-1.5 font-mono text-[11px]"
-                            style={{ maxHeight: "300px" }}
                         >
                             {entries.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-8 text-slate-600">
