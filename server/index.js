@@ -41,8 +41,8 @@ io.use((socket, next) => {
   }
 
   if (CLERK_ISSUER && !decoded.payload.iss.startsWith(CLERK_ISSUER)) {
-     console.error(`Blocked malicious issuer: ${decoded.payload.iss}`);
-     return next(new Error("Authentication error: Invalid Issuer"));
+    console.error(`Blocked malicious issuer: ${decoded.payload.iss}`);
+    return next(new Error("Authentication error: Invalid Issuer"));
   }
 
   const client = jwksClient({
@@ -146,12 +146,11 @@ io.on('connection', (socket) => {
   socket.on('rrweb:request-snapshot', (sessionId) => {
     console.log(`[RRWEB] User ${socket.id} requesting snapshot for ${sessionId}`);
     const guestId = sessionState[sessionId]?.guestSocketId;
-     if (guestId) {
-        io.to(guestId).emit('rrweb:request-snapshot', { requestorId: socket.id });
-     } else {
-        // Fallback broadcast if state missing
-        socket.to(sessionId).emit('rrweb:request-snapshot', { requestorId: socket.id });
-     }
+    if (guestId) {
+      io.to(guestId).emit('rrweb:request-snapshot', { requestorId: socket.id });
+    } else {
+      socket.to(sessionId).emit('rrweb:request-snapshot', { requestorId: socket.id });
+    }
   });
 
   socket.on('rrweb:snapshot', (data) => {
@@ -177,41 +176,60 @@ io.on('connection', (socket) => {
   socket.on('network:replay', (data) => socket.to(data.sessionId).emit('network:replay', data));
 
   // --- REMOTE CONTROL ---
-  socket.on('control:grant', (data) => {
-     // Only the current Guest can grant control
-     if (sessionState[data.sessionId]?.guestSocketId === socket.id) {
-         sessionState[data.sessionId].controllerSocketId = data.targetUserId;
-         io.to(data.sessionId).emit('control:grant', data);
-         console.log(`Control granted to ${data.targetUserId} in ${data.sessionId}`);
-     }
+
+  socket.on('control:request', (data) => {
+    if (!sessionState[data.sessionId]) sessionState[data.sessionId] = {};
+    sessionState[data.sessionId].pendingControllerSocketId = socket.id;
+    console.log(`[CONTROL] Host ${socket.id} requested control in ${data.sessionId}`);
+    socket.to(data.sessionId).emit('control:request', data);
   });
 
-  //  Guest Revokes Control
+  socket.on('control:grant', (data) => {
+    // Only the current Guest can grant control
+    if (sessionState[data.sessionId]?.guestSocketId === socket.id) {
+      // Grant control to the pending requester
+      const requesterId = sessionState[data.sessionId].pendingControllerSocketId;
+      if (requesterId) {
+        sessionState[data.sessionId].controllerSocketId = requesterId;
+        console.log(`[CONTROL] Control granted to ${requesterId} in ${data.sessionId}`);
+      }
+      sessionState[data.sessionId].pendingControllerSocketId = null;
+      io.to(data.sessionId).emit('control:grant', data);
+    }
+  });
+
+  //  Guest or Host Revokes Control
   socket.on('control:revoke', (data) => {
-     if (sessionState[data.sessionId]?.guestSocketId === socket.id) {
-         sessionState[data.sessionId].controllerSocketId = null;
-         io.to(data.sessionId).emit('control:revoke', data);
-     }
+    const state = sessionState[data.sessionId];
+    if (state?.guestSocketId === socket.id || state?.controllerSocketId === socket.id) {
+      sessionState[data.sessionId].controllerSocketId = null;
+      sessionState[data.sessionId].pendingControllerSocketId = null;
+      io.to(data.sessionId).emit('control:revoke', data);
+      console.log(`[CONTROL] Control revoked in ${data.sessionId}`);
+    }
   });
 
   // Host Sends Control Commands (Cursor/Scroll/Click)
   // We check if the sender is the authorized controller
   socket.on('control:cursor', (data) => {
-      const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
-      
-      if (socket.id === authorizedController) {
-          socket.to(data.sessionId).emit('control:cursor', data);
-      } else {
-          console.warn(`Unauthorized control attempt from ${socket.id}`);
-      }
+    const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
+
+    if (socket.id === authorizedController) {
+      socket.to(data.sessionId).emit('control:cursor', data);
+    } else {
+      console.warn(`[CONTROL] Unauthorized control attempt from ${socket.id} (expected: ${authorizedController})`);
+    }
   });
 
-  socket.on('control:request', relay('control:request'));
   socket.on('control:deny', relay('control:deny'));
 
   // --- MAGIC BRUSH SYNC ---
   socket.on('magic:highlight', relay('magic:highlight'));
   socket.on('magic:clear', relay('magic:clear'));
+
+  socket.on('magic:select', (data) => socket.to(data.sessionId).emit('magic:select', data));
+  socket.on('dom:inspected', (data) => socket.to(data.sessionId).emit('dom:inspected', data));
+  socket.on('dom:apply', (data) => socket.to(data.sessionId).emit('dom:apply', data));
 
   // --- SCROLL SYNC ---
   socket.on('pixel:scroll', relay('pixel:scroll'));
@@ -237,9 +255,9 @@ io.on('connection', (socket) => {
         });
         console.log(`Guest ${socket.id} disconnected, role freed for session ${sessionId}`);
       }
-       if (state.controllerSocketId === socket.id) {
+      if (state.controllerSocketId === socket.id) {
         state.controllerSocketId = null;
-       }
+      }
     }
     console.log('User disconnected:', socket.id);
   });

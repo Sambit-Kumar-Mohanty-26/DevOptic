@@ -110,6 +110,85 @@ const getInjectedScript = (socketUrl: string) => `
           if (element.tagName === 'A' && element.href) { window.location.href = element.href; }
         }
       }
+
+      function handleInspect(x, y) {
+          const el = document.elementFromPoint(x, y);
+          if (!el) return;
+
+          let devId = el.getAttribute('data-devoptic-id');
+          if (!devId) {
+             devId = Math.random().toString(36).slice(2);
+             el.setAttribute('data-devoptic-id', devId);
+          }
+
+          const s = window.getComputedStyle(el);
+          const r = el.getBoundingClientRect();
+          
+          const data = {
+              id: devId,
+              tagName: el.tagName.toLowerCase(),
+              classes: el.className,
+              idAttr: el.id,
+              innerText: el.innerText ? el.innerText.slice(0, 200) : '', 
+
+              rect: {
+                  width: r.width,
+                  height: r.height,
+                  top: r.top,
+                  left: r.left
+              },
+              
+              styles: {
+                  // Layout
+                  display: s.display,
+                  position: s.position,
+                  width: s.width,
+                  height: s.height,
+                  margin: s.margin,
+                  padding: s.padding,
+                  
+                  // Typography
+                  color: s.color,
+                  fontSize: s.fontSize,
+                  fontWeight: s.fontWeight,
+                  fontFamily: s.fontFamily,
+                  textAlign: s.textAlign,
+                  lineHeight: s.lineHeight,
+                  
+                  // Appearance
+                  backgroundColor: s.backgroundColor,
+                  borderRadius: s.borderRadius,
+                  border: s.border,
+                  opacity: s.opacity,
+                  visibility: s.visibility,
+                  
+                  //(Flex/Grid) - For the future
+                  flexDirection: s.flexDirection,
+                  justifyContent: s.justifyContent,
+                  alignItems: s.alignItems,
+                  gap: s.gap
+              }
+          };
+
+          console.log('[DevOptic] Inspected:', data.tagName);
+
+          // Send to Parent (page.tsx)
+          window.parent.postMessage({
+             type: 'DEVOPTIC_INSPECTED',
+             payload: data
+          }, '*');
+      }
+
+      function applyStyle(id, property, value) {
+          const el = document.querySelector(\`[data-devoptic-id="\${id}"]\`);
+          if (el) {
+              el.style[property] = value;
+
+              el.style.outline = '2px dashed #4ade80';
+              setTimeout(() => el.style.outline = '', 500);
+          }
+      }
+
       
       // --- PRIVACY GUARD (Detects Sensitive Inputs) ---
       const SENSITIVE_REGEX = /pass|secret|card|cc|cvv|token|auth|login|user|mail|identifier/i;
@@ -205,6 +284,27 @@ const getInjectedScript = (socketUrl: string) => `
            var p = event.data.payload;
            if (p.action === 'click') handleClick(p.x, p.y, p.button);
            if (p.action === 'scroll') addScrollTarget(p.deltaX, p.deltaY);
+
+           if (p.action === 'inspect') handleInspect(p.x, p.y);
+           
+           // Handle synthetic hover for magic brush
+           if (p.action === 'hover') {
+              var el = document.elementFromPoint(p.x, p.y);
+              if (el && el !== lastTarget) {
+                lastTarget = el;
+                if (!['HTML', 'BODY', 'IFRAME'].includes(el.tagName)) {
+                  var rect = el.getBoundingClientRect();
+                  try {
+                    window.parent.postMessage({
+                      type: 'DEVOPTIC_HOVER',
+                      payload: { rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }, selector: getCssPath(el), tagName: el.tagName }
+                    }, '*');
+                  } catch(err) {}
+                }
+              }
+           }
+           
+           if (p.action === 'apply-style') applyStyle(p.id, p.property, p.value);
            
            if (p.action === 'scroll-percent') {
               var targetEl = window;
@@ -339,12 +439,12 @@ export async function GET(req: NextRequest) {
     const response = await axios.get(url, {
       httpAgent: ssrfFilter.http,
       httpsAgent: ssrfFilter.https,
-      headers: { 
+      headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
       },
       timeout: 15000,
-      validateStatus: () => true 
+      validateStatus: () => true
     });
 
     const contentType = response.headers['content-type'];
@@ -362,7 +462,7 @@ export async function GET(req: NextRequest) {
     const wrapUrl = (targetUrl: string) => {
       if (!targetUrl) return "";
       if (targetUrl.startsWith("data:") || targetUrl.startsWith("#") || targetUrl.startsWith("mailto:") || targetUrl.startsWith("tel:")) return targetUrl;
-      
+
       try {
         const absoluteUrl = new URL(targetUrl, baseUrl).href;
         return `/api/proxy?url=${encodeURIComponent(absoluteUrl)}`;
@@ -372,13 +472,13 @@ export async function GET(req: NextRequest) {
     };
 
     const resolveUrl = (targetUrl: string) => {
-        if (!targetUrl) return "";
-        if (targetUrl.startsWith("data:") || targetUrl.startsWith("http") || targetUrl.startsWith("//")) return targetUrl;
-        try {
-            return new URL(targetUrl, baseUrl).href;
-        } catch(e) {
-            return targetUrl;
-        }
+      if (!targetUrl) return "";
+      if (targetUrl.startsWith("data:") || targetUrl.startsWith("http") || targetUrl.startsWith("//")) return targetUrl;
+      try {
+        return new URL(targetUrl, baseUrl).href;
+      } catch (e) {
+        return targetUrl;
+      }
     };
 
     $('base').remove();
@@ -387,7 +487,7 @@ export async function GET(req: NextRequest) {
       const href = $(el).attr('href');
       if (href) {
         $(el).attr('href', wrapUrl(href));
-        $(el).attr('target', '_self'); 
+        $(el).attr('target', '_self');
       }
     });
 
@@ -401,10 +501,10 @@ export async function GET(req: NextRequest) {
     $('img').each((i, el) => { $(el).attr('src', resolveUrl($(el).attr('src') || '')); });
     $('script').each((i, el) => { $(el).attr('src', resolveUrl($(el).attr('src') || '')); });
     $('link').each((i, el) => { $(el).attr('href', resolveUrl($(el).attr('href') || '')); });
-    
-    $('iframe').each((i, el) => { 
-        const src = $(el).attr('src');
-        if(src) $(el).attr('src', wrapUrl(src));
+
+    $('iframe').each((i, el) => {
+      const src = $(el).attr('src');
+      if (src) $(el).attr('src', wrapUrl(src));
     });
 
     const csp = `default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-ancestors 'self' ${FRONTEND_ORIGIN};`;
@@ -412,7 +512,7 @@ export async function GET(req: NextRequest) {
     $('head').append(getInjectedScript(SOCKET_SERVER_URL));
 
     const html = $.html();
-    
+
     return new NextResponse(html, {
       headers: {
         "Content-Type": "text/html",

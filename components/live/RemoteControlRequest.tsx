@@ -69,6 +69,7 @@ export const RemoteControlRequest = ({
 
         // Guest: Handle control request from Host
         const handleRequest = () => {
+            console.log("[RemoteControl] Received control:request");
             if (role === "guest") {
                 setShowRequest(true);
             }
@@ -76,6 +77,7 @@ export const RemoteControlRequest = ({
 
         // Host: Handle control granted
         const handleGrant = () => {
+            console.log("[RemoteControl] Received control:grant");
             if (role === "host") {
                 setRequestPending(false);
                 setHasControl(true);
@@ -94,6 +96,7 @@ export const RemoteControlRequest = ({
 
         // Both: Handle control revoked
         const handleRevoke = () => {
+            console.log("[RemoteControl] Received control:revoke");
             setHasControl(false);
             setControlGranted(false);
             setRequestPending(false);

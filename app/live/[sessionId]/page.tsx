@@ -27,7 +27,8 @@ import { RemoteNetwork } from "@/components/live/RemoteNetwork";
 import { RemoteControlRequest } from "@/components/live/RemoteControlRequest";
 import { CursorControl } from "@/components/live/CursorControl";
 import { getSessionRole } from "@/app/actions";
-import {TelemetryPanel} from "@/components/live/TelemetryPanel";
+import { TelemetryPanel } from "@/components/live/TelemetryPanel";
+import { InspectorPanel } from "@/components/live/InspectorPanel";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -54,6 +55,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [isGuestTaken, setIsGuestTaken] = useState(false);
   const [isPrivacyActive, setIsPrivacyActive] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
+  const [inspectedElement, setInspectedElement] = useState<any>(null);
   const { getToken } = useAuth();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -61,6 +63,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const fabricCanvas = useRef<fabric.Canvas | null>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const roleRef = useRef<"guest" | "host" | null>(null);
 
   const remoteRef = useRef<Record<string, fabric.Path>>({});
   const overlayObjectsRef = useRef<any[]>([]);
@@ -98,31 +101,31 @@ export default function LiveWorkspace({ params }: PageProps) {
         const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
         const socket = io(socketUrl, {
           auth: async (cb) => {
-            const token = await getToken(); 
+            const token = await getToken();
             cb({ token });
           },
           reconnection: true,
-          reconnectionAttempts: Infinity, 
+          reconnectionAttempts: Infinity,
           reconnectionDelay: 1000,
         });
         socketRef.current = socket;
 
         socket.on("connect", () => {
-            console.log("Socket Connected");
-            setIsConnected(true);
-            // Optional: toast.success("Connected to server");
+          console.log("Socket Connected");
+          setIsConnected(true);
+          toast.success("Connected to server");
         });
 
-         socket.on("connect", () => {
-            console.log("Socket Connected");
-            setIsConnected(true);
-            toast.success("Connected to server");
+        socket.on("connect", () => {
+          console.log("Socket Connected");
+          setIsConnected(true);
+          toast.success("Connected to server");
         });
 
         socket.on("disconnect", (reason) => {
-            console.warn("Socket Disconnected:", reason);
-            setIsConnected(false);
-            toast.error("Connection lost. Reconnecting...");
+          console.warn("Socket Disconnected:", reason);
+          setIsConnected(false);
+          toast.error("Connection lost. Reconnecting...");
         });
 
         socket.on('role:state', (data) => {
@@ -135,7 +138,7 @@ export default function LiveWorkspace({ params }: PageProps) {
             setIsGuestTaken(isTaken);
 
             if (isTaken && data.userId !== socket.id && role === 'guest') {
-              setRole(null); 
+              setRole(null);
               setIsRecording(false);
               toast.warning("Another user took the Guest role.");
             }
@@ -151,8 +154,8 @@ export default function LiveWorkspace({ params }: PageProps) {
         });
 
         socket.on('role:granted', () => {
-          setRole("guest"); 
-          setIsRecording(true); 
+          setRole("guest");
+          setIsRecording(true);
           toast.success("Started screen sharing");
         });
 
@@ -230,14 +233,14 @@ export default function LiveWorkspace({ params }: PageProps) {
           if (!canvas) return;
 
           if (objData.layerMode && objData.layerMode !== pixelSubMode) {
-             console.log(`[Layer] Received ${objData.layerMode} object, storing in background.`);
-             
-             if (objData.layerMode === 'overlay') {
-                overlayObjectsRef.current.push(objData);
-             } else {
-                whiteboardObjectsRef.current.push(objData);
-             }
-             return; 
+            console.log(`[Layer] Received ${objData.layerMode} object, storing in background.`);
+
+            if (objData.layerMode === 'overlay') {
+              overlayObjectsRef.current.push(objData);
+            } else {
+              whiteboardObjectsRef.current.push(objData);
+            }
+            return;
           }
 
           const w = canvas.width || 1;
@@ -262,7 +265,7 @@ export default function LiveWorkspace({ params }: PageProps) {
               const newPath = new fabric.Path(options.path, options);
               (newPath as any).isRemote = true;
               (newPath as any).id = options.id;
-              (newPath as any).layerMode = options.layerMode; 
+              (newPath as any).layerMode = options.layerMode;
               canvas.add(newPath);
             } else {
               fabric.util.enlivenObjects([options]).then((enlivenedObjects: any[]) => {
@@ -344,10 +347,9 @@ export default function LiveWorkspace({ params }: PageProps) {
 
         // --- PIXEL SCROLL SYNC ---
         socket.on('pixel:scroll', (data: { percentX: number; percentY: number; selector?: string; userId: string }) => {
-          // Don't scroll if it's our own event
           if (data.userId === socket.id) return;
 
-          console.log('[DevOptic] Client Executing Scroll:', data.percentY, data.selector); // LOG CLIENT EXECUTE
+          console.log('[DevOptic] Client Executing Scroll:', data.percentY, data.selector);
 
           // Send to iframe to execute scroll
           const iframe = document.querySelector('iframe');
@@ -361,6 +363,57 @@ export default function LiveWorkspace({ params }: PageProps) {
                 selector: data.selector
               }
             }, '*');
+          }
+        });
+
+        socket.on('magic:select', (data: { x: number, y: number, normalizedX: number, normalizedY: number }) => {
+          // Guest receives this from Host
+          const iframe = document.querySelector('iframe');
+          const canvas = fabricCanvas.current;
+
+          // Clear hover highlight (the real element rectangle is already synced via magic:highlight)
+          if (canvas) {
+            canvas.getObjects().forEach((obj: any) => {
+              if (obj.id === 'magic-highlight') {
+                canvas.remove(obj);
+              }
+            });
+            canvas.requestRenderAll();
+          }
+
+          if (iframe && iframe.contentWindow) {
+            const rect = iframe.getBoundingClientRect();
+            const actualX = data.normalizedX * rect.width;
+            const actualY = data.normalizedY * rect.height;
+
+            // Tell iframe to inspect the element
+            iframe.contentWindow.postMessage({
+              type: 'DEVOPTIC_CURSOR',
+              payload: { action: 'inspect', x: actualX, y: actualY }
+            }, '*');
+          }
+        });
+
+        socket.on('dom:apply', (data: { id: string, property: string, value: string }) => {
+          const iframe = document.querySelector('iframe');
+          if (iframe && iframe.contentWindow) {
+            iframe.contentWindow.postMessage({
+              type: 'DEVOPTIC_CURSOR',
+              payload: { action: 'apply-style', id: data.id, property: data.property, value: data.value }
+            }, '*');
+
+            toast.success(`Applied ${data.property}: ${data.value}`);
+          }
+        });
+
+        socket.on('dom:inspected', (data: any) => {
+          // Only Host cares about this - use ref to get current role value
+          console.log("[Magic] Received Inspection Data, current role:", roleRef.current);
+          if (roleRef.current === 'host') {
+            console.log("Received Inspection Data:", data);
+            // Just open the InspectorPanel - don't draw another rectangle
+            // Host already has the hover rectangle (magic-highlight) visible
+            setInspectedElement(data);
           }
         });
 
@@ -402,11 +455,8 @@ export default function LiveWorkspace({ params }: PageProps) {
     const canvas = fabricCanvas.current;
     if (!canvas) return;
 
-    // CHANGE: Include 'layerMode' in the exported object
     const data = obj.toObject(['id', 'perPixelTargetFind', 'targetFindTolerance', 'pathOffset', 'layerMode']);
-    
-    // Tag the object with the current mode (overlay or whiteboard)
-    data.layerMode = pixelSubMode; 
+    data.layerMode = pixelSubMode;
 
     const w = canvas.width || 1;
     const h = canvas.height || 1;
@@ -440,6 +490,11 @@ export default function LiveWorkspace({ params }: PageProps) {
         } else {
           console.log("[AutoRole] User is GUEST");
           setRole("guest");
+
+          if (socketRef.current) {
+            socketRef.current.emit('role:claim-guest', sessionId);
+          }
+
           setIsRecording(true);
           toast.success("Joined as Guest - Sharing Screen");
         }
@@ -450,6 +505,11 @@ export default function LiveWorkspace({ params }: PageProps) {
 
     assignRole();
   }, [sessionId]);
+
+  // Keep roleRef in sync with role state for socket event handlers
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
 
   useEffect(() => {
     if (!containerRef.current || !canvasRef.current) return;
@@ -525,9 +585,9 @@ export default function LiveWorkspace({ params }: PageProps) {
 
       // Serialize and include 'layerMode'
       const serializedObjects = currentObjects.map((obj: any) => {
-          const data = obj.toObject(['id', 'isRemote', 'layerMode']);
-          data.layerMode = prevMode;
-          return data;
+        const data = obj.toObject(['id', 'isRemote', 'layerMode']);
+        data.layerMode = prevMode;
+        return data;
       });
 
       //  Save to appropriate Ref
@@ -539,11 +599,11 @@ export default function LiveWorkspace({ params }: PageProps) {
 
       // Clear Canvas (Remove ONLY user objects, keep system stuff if any)
       currentObjects.forEach((obj: any) => {
-        (obj as any).isRemote = true; 
+        (obj as any).isRemote = true;
         canvas.remove(obj);
       });
 
-      // Restore Objects for the NEW mode
+      // Restore Objects for the new mode
       const objectsToRestore = pixelSubMode === 'overlay'
         ? overlayObjectsRef.current
         : whiteboardObjectsRef.current;
@@ -551,14 +611,13 @@ export default function LiveWorkspace({ params }: PageProps) {
       if (objectsToRestore.length > 0) {
         fabric.util.enlivenObjects(objectsToRestore).then((enlivenedObjects: any[]) => {
           enlivenedObjects.forEach((obj) => {
-            // Mark as remote temporarily so we don't re-emit 'draw:add' when adding back to canvas
-            (obj as any).isRemote = true; 
+            (obj as any).isRemote = true;
             (obj as any).layerMode = pixelSubMode;
             canvas.add(obj);
-            
+
             obj.setCoords();
           });
-          
+
           canvas.requestRenderAll();
         });
       }
@@ -568,12 +627,11 @@ export default function LiveWorkspace({ params }: PageProps) {
 
     // Toggle Background
     if (pixelSubMode === 'whiteboard') {
-        canvas.backgroundColor = 'transparent';
-        // Add a grid pattern if desired, or handled via CSS in main div
+      canvas.backgroundColor = 'transparent';
     } else {
-        canvas.backgroundColor = 'transparent';
+      canvas.backgroundColor = 'transparent';
     }
-    
+
     canvas.requestRenderAll();
   }, [pixelSubMode]);
 
@@ -592,6 +650,24 @@ export default function LiveWorkspace({ params }: PageProps) {
 
     if (activeTool === "magic") {
       canvas.selection = false;
+      canvas.defaultCursor = "crosshair";
+
+      canvas.on("mouse:down", (o) => {
+        const pointer = canvas.getScenePoint(o.e);
+
+        const w = canvas.width || 1;
+        const h = canvas.height || 1;
+
+        console.log("[Magic] Click at", pointer);
+
+        socketRef.current?.emit("magic:select", {
+          sessionId,
+          x: pointer.x,
+          y: pointer.y,
+          normalizedX: pointer.x / w,
+          normalizedY: pointer.y / h
+        });
+      });
     }
 
     // --- PENCIL TOOL ---
@@ -838,10 +914,10 @@ export default function LiveWorkspace({ params }: PageProps) {
         canvas.setActiveObject(text);
         canvas.requestRenderAll();
         text.enterEditing();
-        text.selectAll(); 
+        text.selectAll();
         emitObjectUpdate(text);
         setTimeout(() => {
-          setActiveTool("select"); 
+          setActiveTool("select");
         }, 100);
       });
     }
@@ -889,16 +965,16 @@ export default function LiveWorkspace({ params }: PageProps) {
         evented: false,
         id: 'magic-highlight',
         objectCaching: false,
-        originX: 'left', // Force origin to be top-left
+        originX: 'left',
         originY: 'top'
       });
 
       canvas.add(highlight);
       canvas.requestRenderAll();
 
-      // Emit PERCENTAGE coordinates
-      // This ensures that if the guest has a different window width (responsive layout),
-      // the highlight stays relative to the element's position on *their* screen.
+      // Emit to socket for the other user to see
+      // Both Host and Guest can emit - the receiver will just draw it locally
+      // No loop because socket events go to room members EXCEPT sender
       const cvsW = canvas.width || 1;
       const cvsH = canvas.height || 1;
 
@@ -934,6 +1010,25 @@ export default function LiveWorkspace({ params }: PageProps) {
       }
     };
   }, [activeTool, pixelSubMode, sessionId]);
+
+  useEffect(() => {
+    const handleInspectorMessage = (event: MessageEvent) => {
+      // Listen for Inspection Result from Proxy
+      if (event.data?.type === 'DEVOPTIC_INSPECTED') {
+        console.log("[Bridge] Forwarding inspection data to host"); // <--- Debug Log
+        const elementData = event.data.payload;
+
+        //Forward to Host via Socket
+        socketRef.current?.emit('dom:inspected', {
+          sessionId,
+          ...elementData
+        });
+      }
+    };
+
+    window.addEventListener('message', handleInspectorMessage);
+    return () => window.removeEventListener('message', handleInspectorMessage);
+  }, [sessionId]);
 
   useEffect(() => {
     const handlePrivacyMessage = (event: MessageEvent) => {
@@ -1060,11 +1155,11 @@ export default function LiveWorkspace({ params }: PageProps) {
 
         <div className="flex items-center gap-4">
           {role === 'host' && (
-            <button 
-              onClick={copyInvite} 
+            <button
+              onClick={copyInvite}
               className="flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-lg text-xs font-medium hover:bg-white/10 transition-all"
             >
-              {copied ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />} 
+              {copied ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />}
               {copied ? "Copied" : "Invite"}
             </button>
           )}
@@ -1151,8 +1246,8 @@ export default function LiveWorkspace({ params }: PageProps) {
         <main className="flex-1 relative flex items-center justify-center p-4 bg-[#020617]">
           {!isConnected && (
             <div className="absolute top-0 left-0 right-0 z-100 bg-red-600/90 backdrop-blur text-white text-xs font-bold text-center py-2 animate-pulse shadow-lg flex items-center justify-center gap-2">
-               <Shield size={14} /> 
-               CONNECTION LOST - ATTEMPTING TO RECONNECT...
+              <Shield size={14} />
+              CONNECTION LOST - ATTEMPTING TO RECONNECT...
             </div>
           )}
           <div className="w-full h-full rounded-2xl border border-white/10 shadow-2xl overflow-hidden relative flex flex-col">
@@ -1181,15 +1276,84 @@ export default function LiveWorkspace({ params }: PageProps) {
 
             <div className="flex-1 relative overflow-hidden" ref={containerRef}
               style={{
-                // Fix for White Screen Bug: Only apply white background when explicitly in whiteboard mode
                 backgroundColor: pixelSubMode === 'whiteboard' && mode === 'pixel' ? '#ffffff' : 'transparent',
                 backgroundImage: pixelSubMode === 'whiteboard' && mode === 'pixel' ? 'radial-gradient(#cbd5e1 1px, transparent 1px)' : 'none',
                 backgroundSize: '20px 20px',
               }}>
 
-              <div className={`absolute inset-0 z-20 ${mode === "pixel" && activeTool !== 'magic' && activeTool !== 'select' ? "pointer-events-auto" : "pointer-events-none"}`}>
-                <canvas ref={canvasRef} />
+              <div
+                className={`absolute inset-0 z-20`}
+                style={{
+                  pointerEvents: mode === "pixel" && activeTool !== 'select' ? 'auto' : 'none',
+                }}
+              >
+                <canvas
+                  ref={canvasRef}
+                />
               </div>
+
+              {mode === 'pixel' && activeTool === 'magic' && (
+                <div
+                  className="absolute inset-0 z-25"
+                  style={{
+                    cursor: 'crosshair',
+                    pointerEvents: 'auto',
+                  }}
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const canvas = fabricCanvas.current;
+                    const w = canvas?.width || rect.width;
+                    const h = canvas?.height || rect.height;
+
+                    console.log("[Magic] Click at", { x, y, normalizedX: x / w, normalizedY: y / h, role: roleRef.current });
+
+                    // Clear hover highlight when clicking
+                    if (canvas) {
+                      canvas.getObjects().forEach((obj: any) => {
+                        if (obj.id === 'magic-highlight') canvas.remove(obj);
+                      });
+                      canvas.requestRenderAll();
+                    }
+
+                    // Host clicks -> sends to Guest for inspection
+                    // Guest clicks -> inspects directly on their own iframe
+                    if (roleRef.current === 'host') {
+                      socketRef.current?.emit("magic:select", {
+                        sessionId,
+                        x: x,
+                        y: y,
+                        normalizedX: x / w,
+                        normalizedY: y / h
+                      });
+                    } else if (roleRef.current === 'guest') {
+                      // Guest can inspect directly on their own iframe
+                      const iframe = document.querySelector('iframe');
+                      if (iframe && iframe.contentWindow) {
+                        iframe.contentWindow.postMessage({
+                          type: 'DEVOPTIC_CURSOR',
+                          payload: { action: 'inspect', x, y }
+                        }, '*');
+                      }
+                    }
+                  }}
+                  onMouseMove={(e) => {
+                    // Forward mouse position to iframe for hover detection
+                    const iframe = document.querySelector('iframe');
+                    if (iframe && iframe.contentWindow) {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const x = e.clientX - rect.left;
+                      const y = e.clientY - rect.top;
+                      // Send synthetic mousemove to iframe
+                      iframe.contentWindow.postMessage({
+                        type: 'DEVOPTIC_CURSOR',
+                        payload: { action: 'hover', x, y }
+                      }, '*');
+                    }
+                  }}
+                />
+              )}
 
               {(pixelSubMode === 'overlay' || mode === 'debug') && (
                 <iframe key={`${targetUrl}-${refreshKey}`}
@@ -1199,10 +1363,9 @@ export default function LiveWorkspace({ params }: PageProps) {
                   onLoad={() => setIsLoading(false)} />
               )}
 
-              {/* WebRTC Screen Share for Host - real-time video stream */}
               {role === 'host' && mode === 'debug' && (
                 <div className="absolute inset-0 z-10">
-                  <ScreenShareHost sessionId={sessionId} socket={socketRef.current} hasControl={hasControl} />
+                  <ScreenShareHost sessionId={sessionId} socket={socketRef.current} hasControl={hasControl} activeTool={activeTool} />
                 </div>
               )}
 
@@ -1214,17 +1377,42 @@ export default function LiveWorkspace({ params }: PageProps) {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+
+              <AnimatePresence>
+                {inspectedElement && role === 'host' && (
+                  <motion.div
+                    initial={{ x: 320 }}
+                    animate={{ x: 0 }}
+                    exit={{ x: 320 }}
+                    className="absolute right-0 top-0 bottom-0 z-50 flex h-full shadow-2xl" // Added h-full and shadow
+                  >
+                    <InspectorPanel
+                      data={inspectedElement}
+                      onClose={() => setInspectedElement(null)}
+                      onApply={(id, prop, val) => {
+                        socketRef.current?.emit('dom:apply', {
+                          sessionId,
+                          id,
+                          property: prop,
+                          value: val
+                        });
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </main>
 
         <AnimatePresence>
           {mode === "debug" && (
-            <motion.aside 
-              initial={{ x: 400 }} 
-              animate={{ x: 0 }} 
-              exit={{ x: 400 }} 
-              className="w-96 border-l border-white/5 bg-slate-950/80 backdrop-blur-xl flex flex-col z-40 h-full" 
+            <motion.aside
+              initial={{ x: 400 }}
+              animate={{ x: 0 }}
+              exit={{ x: 400 }}
+              className="w-96 border-l border-white/5 bg-slate-950/80 backdrop-blur-xl flex flex-col z-40 h-full"
             >
 
               <div className="p-4 border-b border-white/5 flex items-center justify-between shrink-0">
@@ -1243,7 +1431,7 @@ export default function LiveWorkspace({ params }: PageProps) {
 
               {role === "host" && (
                 <div className="flex-1 overflow-hidden relative">
-                   <TelemetryPanel sessionId={sessionId} socket={socketRef.current} />
+                  <TelemetryPanel sessionId={sessionId} socket={socketRef.current} />
                 </div>
               )}
             </motion.aside>
@@ -1264,6 +1452,7 @@ export default function LiveWorkspace({ params }: PageProps) {
             <CursorControl sessionId={sessionId} socket={socketRef.current} controlGranted={controlGranted} />
           </>
         )}
+
       </div>
     </div>
   );

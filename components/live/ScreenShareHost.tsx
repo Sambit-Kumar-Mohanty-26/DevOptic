@@ -8,6 +8,7 @@ interface ScreenShareHostProps {
     sessionId: string;
     socket: Socket | null;
     hasControl?: boolean;
+    activeTool?: string; 
 }
 
 const rtcConfig: RTCConfiguration = {
@@ -17,7 +18,7 @@ const rtcConfig: RTCConfiguration = {
     ],
 };
 
-export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: ScreenShareHostProps) => {
+export const ScreenShareHost = ({ sessionId, socket, hasControl = false, activeTool = "select" }: ScreenShareHostProps) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
@@ -110,19 +111,32 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
                     deltaY: y
                 });
                 
-                // Reset
                 scrollAccumulator.current = { x: 0, y: 0 };
             }
-        }, 16); // 16ms = ~60 FPS (Matches standard screen refresh rate)
+        }, 16); // 16ms = ~60 FPS
 
         return () => clearInterval(interval);
     }, [hasControl, sendCursorEvent]);
 
     const handleClick = useCallback((e: React.MouseEvent) => {
-        if (!hasControl) return;
+        if (!hasControl && activeTool !== 'magic') return;
+
         const coords = calculateVideoCoordinates(e);
-        if (coords) sendCursorEvent("click", coords.x, coords.y, { button: e.button });
-    }, [hasControl, sendCursorEvent]);
+        if (!coords) return;
+
+        if (activeTool === 'magic') {
+            console.log("[Inspector] Triggering inspection at", coords.x, coords.y);
+            socket?.emit("magic:select", {
+                sessionId,
+                x: coords.x,
+                y: coords.y,
+                normalizedX: coords.x / (videoRef.current?.videoWidth || 1),
+                normalizedY: coords.y / (videoRef.current?.videoHeight || 1)
+            });
+        } else {
+            sendCursorEvent("click", coords.x, coords.y, { button: e.button });
+        }
+    }, [hasControl, activeTool, socket, sessionId, sendCursorEvent]); 
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         if (!hasControl) return;
@@ -233,7 +247,7 @@ export const ScreenShareHost = ({ sessionId, socket, hasControl = false }: Scree
                     </p>
                 </div>
             )}
-            <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-contain ${hasControl ? 'cursor-none' : ''}`} style={{ opacity: status === "streaming" ? 1 : 0 }} onClick={handleClick} onMouseMove={hasControl ? handleMouseMove : undefined} />
+            <video ref={videoRef} autoPlay playsInline muted className={`w-full h-full object-contain ${hasControl ? (activeTool === 'magic' ? 'cursor-crosshair' : 'cursor-none') : ''} ${privacyMode ? 'opacity-0' : 'opacity-100'}`} style={{ opacity: status === "streaming" ? 1 : 0 }} onClick={handleClick} onMouseMove={hasControl ? handleMouseMove : undefined} />
         </div>
     );
 };

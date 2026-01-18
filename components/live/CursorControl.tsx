@@ -53,9 +53,11 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
         setTimeout(() => setRemoteCursor(prev => prev ? { ...prev, clicking: false } : null), 200);
 
         const element = document.elementFromPoint(x, y) as HTMLElement;
+        console.log("[CursorControl] Element from point:", element?.tagName, element?.className);
         if (!element) return;
 
         if (element.tagName === 'IFRAME') {
+            console.log("[CursorControl] Sending click to IFRAME");
             sendToIframe('click', x, y, { button });
             return;
         }
@@ -115,9 +117,11 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
 
             switch (data.type) {
                 case "click":
+                    console.log("[CursorControl] Simulating click at", x, y);
                     simulateClick(x, y, data.button || 0);
                     break;
                 case "scroll":
+                    console.log("[CursorControl] Simulating scroll", data.deltaX, data.deltaY);
                     simulateScroll(data.deltaX || 0, data.deltaY || 0, x, y);
                     break;
             }
@@ -145,22 +149,22 @@ export const CursorControl = ({ sessionId, socket, controlGranted }: CursorContr
             }}
         >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
-                style={{ 
-                    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))', 
-                    transform: remoteCursor.clicking ? 'scale(0.8)' : 'scale(1)', 
-                    transition: 'transform 0.1s' 
+                style={{
+                    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.5))',
+                    transform: remoteCursor.clicking ? 'scale(0.8)' : 'scale(1)',
+                    transition: 'transform 0.1s'
                 }}>
                 <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L6.35 2.86a.5.5 0 0 0-.85.35Z" fill="#8B5CF6" stroke="#fff" strokeWidth="1.5" />
             </svg>
-            <span style={{ 
-                position: 'absolute', 
-                left: 16, 
-                top: 12, 
-                background: '#8B5CF6', 
-                color: 'white', 
-                padding: '2px 6px', 
-                borderRadius: 4, 
-                fontSize: 10, 
+            <span style={{
+                position: 'absolute',
+                left: 16,
+                top: 12,
+                background: '#8B5CF6',
+                color: 'white',
+                padding: '2px 6px',
+                borderRadius: 4,
+                fontSize: 10,
                 fontWeight: 'bold',
                 boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
             }}>
