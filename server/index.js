@@ -126,14 +126,40 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('call:request', (data) => {
+      console.log(`[CALL] ${data.type} call started by ${socket.id}`);
+      socket.to(data.sessionId).emit('call:incoming', { 
+          callerId: socket.id,
+          type: data.type || 'video'
+      });
+  });
+
+  socket.on('call:accept', (data) => {
+      console.log(`[CALL] Call accepted by ${socket.id}`);
+      socket.to(data.sessionId).emit('call:accepted', { acceptorId: socket.id });
+  });
+
+  socket.on('call:reject', (data) => {
+      socket.to(data.sessionId).emit('call:rejected');
+  });
+
+  socket.on('call:end', (data) => {
+      socket.to(data.sessionId).emit('call:ended');
+  });
+
 
   const relay = (event) => (data) => socket.to(data.sessionId).emit(event, data);
   const relayObj = (event) => (data) => socket.to(data.sessionId).emit(event, data.object);
   const relayId = (event) => (data) => socket.to(data.sessionId).emit(event, data.objectId);
+  const relayCall = (event) => (data) => socket.to(data.sessionId).emit(event, data);
 
   socket.on('cursor:down', relay('cursor:down'));
   socket.on('cursor:move', relay('cursor:move'));
   socket.on('cursor:up', relay('cursor:up'));
+
+  socket.on('call:offer', relayCall('call:offer'));
+  socket.on('call:answer', relayCall('call:answer'));
+  socket.on('call:ice-candidate', relayCall('call:ice-candidate'));
 
   socket.on('draw:add', relayObj('draw:add'));
   socket.on('draw:remove', relayId('draw:remove'));

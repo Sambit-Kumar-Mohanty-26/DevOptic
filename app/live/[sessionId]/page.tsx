@@ -8,7 +8,8 @@ import {
   Shield, Cpu, Check, Globe, Zap, Search,
   RotateCw, ChevronLeft, Trash2, Eraser, Wand2,
   LayoutTemplate, ArrowRight, Triangle, AppWindow, Grid3x3,
-  Monitor, Eye, Video, VideoOff
+  Monitor, Eye, Video, VideoOff,
+  Phone
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { useAuth } from "@clerk/nextjs";
@@ -29,6 +30,7 @@ import { CursorControl } from "@/components/live/CursorControl";
 import { getSessionRole } from "@/app/actions";
 import { TelemetryPanel } from "@/components/live/TelemetryPanel";
 import { InspectorPanel } from "@/components/live/InspectorPanel";
+import { CallInterface, CallInterfaceRef } from "@/components/live/CallInterface";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -63,6 +65,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const fabricCanvas = useRef<fabric.Canvas | null>(null);
   const colorInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const callRef = useRef<CallInterfaceRef>(null);
   const roleRef = useRef<"guest" | "host" | null>(null);
 
   const remoteRef = useRef<Record<string, fabric.Path>>({});
@@ -1154,6 +1157,23 @@ export default function LiveWorkspace({ params }: PageProps) {
         </div>
 
         <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-lg p-1 mr-2">
+             <button 
+                onClick={() => callRef.current?.startCall('audio')}
+                className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-emerald-400 transition-colors"
+                title="Voice Call"
+             >
+                <Phone size={14} />
+             </button>
+             <div className="w-px h-4 bg-white/10" />
+             <button 
+                onClick={() => callRef.current?.startCall('video')}
+                className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-emerald-400 transition-colors"
+                title="Video Call"
+             >
+                <Video size={14} />
+             </button>
+          </div>
           {role === 'host' && (
             <button
               onClick={copyInvite}
@@ -1452,6 +1472,12 @@ export default function LiveWorkspace({ params }: PageProps) {
             <CursorControl sessionId={sessionId} socket={socketRef.current} controlGranted={controlGranted} />
           </>
         )}
+        <CallInterface 
+            ref={callRef} 
+            sessionId={sessionId} 
+            socket={socketRef.current} 
+            role={role} 
+        />
 
       </div>
     </div>
