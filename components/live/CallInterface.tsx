@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Phone, PhoneOff, Mic, MicOff, Video as VideoIcon, VideoOff, Move } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Video as VideoIcon, VideoOff, Move, ArrowDownRight } from "lucide-react";
 import type { Socket } from "socket.io-client";
 import { toast } from "sonner";
 
@@ -26,10 +26,26 @@ export const CallInterface = forwardRef<CallInterfaceRef, CallInterfaceProps>(({
     const [isMuted, setIsMuted] = useState(false);
     const [isVideoOff, setIsVideoOff] = useState(false);
     
+    const [win, setWin] = useState({ x: 0, y: 0, w: 320, h: 240, initialized: false });
+    const interactionMode = useRef<string | null>(null);
+    const startPos = useRef({ x: 0, y: 0, winX: 0, winY: 0, winW: 0, winH: 0 });
+
     const localStreamRef = useRef<MediaStream | null>(null);
     const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
     const localVideoRef = useRef<HTMLVideoElement>(null);
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
+
+    useEffect(() => {
+        if (!win.initialized && typeof window !== 'undefined') {
+            setWin({
+                x: window.innerWidth - 340,
+                y: window.innerHeight - 300,
+                w: 320,
+                h: 240,
+                initialized: true
+            });
+        }
+    }, [win.initialized]);
 
     useImperativeHandle(ref, () => ({
         startCall: (type: 'audio' | 'video') => {
@@ -38,6 +54,86 @@ export const CallInterface = forwardRef<CallInterfaceRef, CallInterfaceProps>(({
             socket?.emit("call:request", { sessionId, type });
         }
     }));
+
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!interactionMode.current) return;
+            e.preventDefault();
+
+            const dx = e.clientX - startPos.current.x;
+            const dy = e.clientY - startPos.current.y;
+            const s = startPos.current;
+
+            setWin(prev => {
+                let { x, y, w, h } = prev;
+                const mode = interactionMode.current;
+
+                if (mode === 'move') {
+                    x = s.winX + dx;
+                    y = s.winY + dy;
+                }
+                else if (mode === 'br') {
+                    w = Math.max(200, s.winW + dx);
+                    h = Math.max(150, s.winH + dy);
+                }
+                else if (mode === 'bl') {
+                    const newW = Math.max(200, s.winW - dx);
+                    x = s.winX + (s.winW - newW);
+                    w = newW;
+                    h = Math.max(150, s.winH + dy);
+                }
+                else if (mode === 'tr') {
+                    w = Math.max(200, s.winW + dx);
+                    const newH = Math.max(150, s.winH - dy);
+                    y = s.winY + (s.winH - newH);
+                    h = newH;
+                }
+                else if (mode === 'tl') {
+                    const newW = Math.max(200, s.winW - dx);
+                    const newH = Math.max(150, s.winH - dy);
+                    x = s.winX + (s.winW - newW);
+                    y = s.winY + (s.winH - newH);
+                    w = newW;
+                    h = newH;
+                }
+
+                return { ...prev, x, y, w, h };
+            });
+        };
+
+        const handleMouseUp = () => {
+            interactionMode.current = null;
+            document.body.style.cursor = 'default';
+            document.body.style.userSelect = 'auto';
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, []);
+
+    const startInteraction = (e: React.MouseEvent, mode: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        interactionMode.current = mode;
+        startPos.current = {
+            x: e.clientX,
+            y: e.clientY,
+            winX: win.x,
+            winY: win.y,
+            winW: win.w,
+            winH: win.h
+        };
+        
+        document.body.style.userSelect = 'none';
+        if (mode === 'move') document.body.style.cursor = 'grabbing';
+        if (mode === 'tl' || mode === 'br') document.body.style.cursor = 'nwse-resize';
+        if (mode === 'tr' || mode === 'bl') document.body.style.cursor = 'nesw-resize';
+    };
 
     const startLocalStream = async (type: 'audio' | 'video') => {
         try {
@@ -49,14 +145,14 @@ export const CallInterface = forwardRef<CallInterfaceRef, CallInterfaceProps>(({
             localStreamRef.current = stream;
             if (localVideoRef.current) localVideoRef.current.srcObject = stream;
             
-            setIsVideoOff(type === 'audio');
+            setIsVideoOff(type === 'audio'); 
             return stream;
 
         } catch (err: any) {
             console.error("Media Error:", err.name);
             
             if (type === 'video' && (err.name === 'NotReadableError' || err.name === 'TrackStartError')) {
-                toast.warning("Camera unavailable (in use?). Switching to Audio Only.");
+                toast.warning("Camera unavailable. Switching to Audio Only.");
                 try {
                     const audioStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
                     localStreamRef.current = audioStream;
@@ -240,18 +336,29 @@ export const CallInterface = forwardRef<CallInterfaceRef, CallInterfaceProps>(({
             )}
 
             <AnimatePresence>
-                {callStatus === "connected" && (
+                {callStatus === "connected" && win.initialized && (
                     <motion.div
-                        drag dragMomentum={false}
-                        initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.8, opacity: 0 }}
-                        className="fixed bottom-6 right-6 z-[100] w-72 bg-slate-950 rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex flex-col"
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.8, opacity: 0 }}
+                        style={{ 
+                            position: 'fixed', 
+                            left: win.x, 
+                            top: win.y, 
+                            width: win.w, 
+                            height: win.h,
+                            zIndex: 100
+                        }}
+                        className="bg-slate-950 rounded-2xl overflow-hidden border border-white/10 shadow-2xl flex flex-col min-w-[200px] min-h-[150px]"
                     >
-                        <div className="bg-slate-900/80 p-2 flex justify-center cursor-move active:cursor-grabbing border-b border-white/5">
+                        <div 
+                            onMouseDown={(e) => startInteraction(e, 'move')}
+                            className="bg-slate-900/80 p-2 flex justify-center cursor-move active:cursor-grabbing border-b border-white/5 shrink-0"
+                        >
                             <Move size={14} className="text-slate-600" />
                         </div>
 
-                        <div className="relative aspect-video bg-black group">
-
+                        <div className="relative flex-1 bg-black group overflow-hidden">
                             {callType === 'audio' ? (
                                 <div className="w-full h-full flex items-center justify-center bg-slate-900">
                                     <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center animate-pulse">
@@ -263,13 +370,13 @@ export const CallInterface = forwardRef<CallInterfaceRef, CallInterfaceProps>(({
                             )}
                             
                             {callType === 'video' && (
-                                <div className="absolute bottom-2 right-2 w-20 aspect-video bg-slate-800 rounded-lg overflow-hidden border border-white/20 shadow-lg">
+                                <div className="absolute bottom-2 right-2 w-[30%] aspect-video bg-slate-800 rounded-lg overflow-hidden border border-white/20 shadow-lg">
                                     <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
                                 </div>
                             )}
                         </div>
 
-                        <div className="p-3 flex justify-center gap-4 bg-slate-900">
+                        <div className="p-3 flex justify-center gap-4 bg-slate-900 shrink-0 relative">
                             <button onClick={toggleMute} className={`p-2 rounded-full transition-colors ${isMuted ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-white hover:bg-slate-700'}`}>
                                 {isMuted ? <MicOff size={18} /> : <Mic size={18} />}
                             </button>
@@ -279,6 +386,30 @@ export const CallInterface = forwardRef<CallInterfaceRef, CallInterfaceProps>(({
                             <button onClick={toggleVideo} disabled={callType === 'audio'} className={`p-2 rounded-full transition-colors ${isVideoOff || callType === 'audio' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-white hover:bg-slate-700'} ${callType === 'audio' ? 'opacity-50 cursor-not-allowed' : ''}`}>
                                 {isVideoOff ? <VideoOff size={18} /> : <VideoIcon size={18} />}
                             </button>
+
+                            <div 
+                                onMouseDown={(e) => startInteraction(e, 'tl')}
+                                className="absolute -top-[40px] left-0 w-6 h-6 cursor-nwse-resize z-50 bg-transparent" 
+                                style={{ top: -35 }}
+                            />
+                            
+                            <div 
+                                onMouseDown={(e) => startInteraction(e, 'tr')}
+                                className="absolute -top-[40px] right-0 w-6 h-6 cursor-nesw-resize z-50 bg-transparent"
+                                style={{ top: -35 }}
+                            />
+                            
+                            <div 
+                                onMouseDown={(e) => startInteraction(e, 'bl')}
+                                className="absolute bottom-0 left-0 w-6 h-6 cursor-nesw-resize z-50 bg-transparent"
+                            />
+
+                            <div 
+                                onMouseDown={(e) => startInteraction(e, 'br')}
+                                className="absolute bottom-0 right-0 p-1 cursor-nwse-resize hover:text-emerald-400 text-slate-600 transition-colors z-50"
+                            >
+                                <ArrowDownRight size={16} />
+                            </div>
                         </div>
                     </motion.div>
                 )}
