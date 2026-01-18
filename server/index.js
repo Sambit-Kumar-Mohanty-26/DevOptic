@@ -243,6 +243,26 @@ io.on('connection', (socket) => {
     socket.to(data.sessionId).emit('mode:switch', data);
   });
 
+   // Host sends code -> Server checks permission -> Sends to Guest
+  socket.on('console:execute', (data) => {
+      const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
+      
+      // Only the Controller can execute code
+      if (socket.id === authorizedController) {
+          console.log(`[EXEC] Host ${socket.id} executing code on Guest`);
+          io.to(data.sessionId).emit('console:execute', data);
+      } else {
+          console.warn(`[EXEC] Unauthorized execution attempt from ${socket.id}`);
+          socket.emit('console:error', { 
+              args: [" Permission Denied: You must request control first."],
+              timestamp: Date.now() 
+          });
+      }
+  });
+
+  // Guest sends result -> Server relays to Host
+  socket.on('console:result', relay('console:result'));
+
   socket.on('disconnect', () => {
     for (const [sessionId, state] of Object.entries(sessionState)) {
       if (state.guestSocketId === socket.id) {

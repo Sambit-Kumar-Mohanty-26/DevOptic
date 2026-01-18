@@ -156,6 +156,49 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
             info: originalInfo,
         };
 
+        const handleRemoteExecute = (data: { command: string }) => {
+            console.log("[Guest] Bridging command to iframe:", data.command);
+            
+            const iframe = document.querySelector('iframe');
+            
+            // If iframe exists, tunnel the code inside
+            if (iframe && iframe.contentWindow) {
+                iframe.contentWindow.postMessage({
+                    type: 'DEVOPTIC_CURSOR',
+                    payload: { action: 'eval', code: data.command }
+                }, '*');
+            } else {
+                //Fallback: If no iframe (rare), run locally but warn
+                try {
+                    const result = (0, eval)(data.command);
+                    socket.emit("console:result", { sessionId, args: [String(result)], timestamp: Date.now() });
+                } catch (e: any) {
+                    socket.emit("console:error", { sessionId, args: [e.toString()], timestamp: Date.now() });
+                }
+            }
+        };
+
+        // Listen for Results coming back from the Iframe
+        const handleIframeResult = (event: MessageEvent) => {
+            if (event.data?.type === 'DEVOPTIC_EVAL_RESULT') {
+                socket.emit("console:result", {
+                    sessionId,
+                    args: [event.data.payload.result],
+                    timestamp: Date.now()
+                });
+            }
+            if (event.data?.type === 'DEVOPTIC_EVAL_ERROR') {
+                socket.emit("console:error", {
+                    sessionId,
+                    args: [event.data.payload.error],
+                    timestamp: Date.now()
+                });
+            }
+        };
+
+        window.addEventListener('message', handleIframeResult);
+        socket.on('console:execute', handleRemoteExecute);
+
         const serializeArgs = (args: unknown[]) => {
             return args.map((arg) => {
                 if (arg === null) return "null";
@@ -190,7 +233,9 @@ export const GuestRecorder = ({ sessionId, socket, isRecording }: GuestRecorderP
 
         return () => {
             console.log("[GuestRecorder] Stopping recording");
-            socket.off('rrweb:request-snapshot', handleSnapshotRequest);           
+            socket.off('rrweb:request-snapshot', handleSnapshotRequest);
+            socket.off('console:execute', handleRemoteExecute);
+            window.removeEventListener('message', handleIframeResult);         
             if (stopRecordingRef.current) {
                 stopRecordingRef.current();
                 stopRecordingRef.current = null;

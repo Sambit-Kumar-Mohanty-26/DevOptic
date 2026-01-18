@@ -305,6 +305,36 @@ const getInjectedScript = (socketUrl: string) => `
            }
            
            if (p.action === 'apply-style') applyStyle(p.id, p.property, p.value);
+
+           if (p.action === 'eval') {
+              try {
+                var result = eval(p.code);
+
+                var output;
+                if (typeof result === 'object' && result !== null) {
+                    try {
+                        output = JSON.stringify(result);
+                    } catch (e) {
+                        output = "[Object (Circular)]";
+                    }
+                } else if (result === undefined) {
+                    output = "undefined";
+                } else {
+                    output = String(result);
+                }
+
+                window.parent.postMessage({ 
+                    type: 'DEVOPTIC_EVAL_RESULT', 
+                    payload: { result: output } 
+                }, '*');
+
+              } catch (e) {
+                window.parent.postMessage({ 
+                    type: 'DEVOPTIC_EVAL_ERROR', 
+                    payload: { error: e.toString() } 
+                }, '*');
+              }
+           }
            
            if (p.action === 'scroll-percent') {
               var targetEl = window;
