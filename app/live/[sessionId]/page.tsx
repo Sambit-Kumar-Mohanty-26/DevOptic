@@ -9,7 +9,8 @@ import {
   RotateCw, ChevronLeft, Trash2, Eraser, Wand2,
   LayoutTemplate, ArrowRight, Triangle, AppWindow, Grid3x3,
   Monitor, Eye, Video, VideoOff,
-  Phone
+  Phone,
+  Folder
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { useAuth } from "@clerk/nextjs";
@@ -31,6 +32,7 @@ import { getSessionRole } from "@/app/actions";
 import { TelemetryPanel } from "@/components/live/TelemetryPanel";
 import { InspectorPanel } from "@/components/live/InspectorPanel";
 import { CallInterface, CallInterfaceRef } from "@/components/live/CallInterface";
+import { FileEditor } from "@/components/live/FileEditor";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -59,6 +61,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [isConnected, setIsConnected] = useState(true);
   const [inspectedElement, setInspectedElement] = useState<any>(null);
   const { getToken } = useAuth();
+  const [rightPanelTab, setRightPanelTab] = useState<"telemetry" | "files">("telemetry");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1435,12 +1438,31 @@ export default function LiveWorkspace({ params }: PageProps) {
               className="w-96 border-l border-white/5 bg-slate-950/80 backdrop-blur-xl flex flex-col z-40 h-full"
             >
 
-              <div className="p-4 border-b border-white/5 flex items-center justify-between shrink-0">
-                <span className="text-xs font-bold text-cyan-400 flex items-center gap-2 tracking-widest uppercase">
-                  <Cpu size={14} /> Telemetry_Stream
-                </span>
-                <div className="w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_10px_cyan]" />
+              <div className="flex border-b border-white/5 shrink-0">
+                <button
+                  onClick={() => setRightPanelTab("telemetry")}
+                  className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 uppercase tracking-wider transition-colors ${
+                    rightPanelTab === "telemetry" 
+                      ? "text-cyan-400 bg-cyan-500/5 border-b-2 border-cyan-500" 
+                      : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                  }`}
+                >
+                  <Cpu size={14} /> Telemetry
+                </button>
+                <button
+                  onClick={() => setRightPanelTab("files")}
+                  className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 uppercase tracking-wider transition-colors ${
+                    rightPanelTab === "files" 
+                      ? "text-blue-400 bg-blue-500/5 border-b-2 border-blue-500" 
+                      : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                  }`}
+                >
+                  <Folder size={14} /> Files
+                </button>
               </div>
+            {rightPanelTab === "telemetry" ? (
+                // EXISTING TELEMETRY UI
+                <>
 
               <div className="p-4 font-mono text-[10px] space-y-3 border-b border-white/5 shrink-0 max-h-48 overflow-y-auto">
                 <LogEntry type="info" text="PROXY_TUNNEL_ESTABLISHED" />
@@ -1452,6 +1474,12 @@ export default function LiveWorkspace({ params }: PageProps) {
               {role === "host" && (
                 <div className="flex-1 overflow-hidden relative">
                   <TelemetryPanel sessionId={sessionId} socket={socketRef.current} />
+                </div>
+              )}
+              </>
+             ) : (
+                <div className="flex-1 overflow-hidden relative">
+                   <FileEditor sessionId={sessionId} socket={socketRef.current} />
                 </div>
               )}
             </motion.aside>

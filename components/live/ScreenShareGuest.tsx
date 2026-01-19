@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Socket } from "socket.io-client";
+import { Monitor, RefreshCw } from "lucide-react";
 
 interface ScreenShareGuestProps {
     sessionId: string;
@@ -26,6 +27,7 @@ export const ScreenShareGuest = ({
     const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const [status, setStatus] = useState<"idle" | "connecting" | "sharing">("idle");
+    const [showManualStart, setShowManualStart] = useState(false);
     const hasStartedRef = useRef(false);
 
     // Cleanup function
@@ -43,20 +45,12 @@ export const ScreenShareGuest = ({
         hasStartedRef.current = false;
     }, []);
 
-    // Start screen sharing
     const startSharing = useCallback(async () => {
-        if (!socket) {
-            console.log("[ScreenShareGuest] No socket available");
-            return;
-        }
-
-        if (hasStartedRef.current) {
-            console.log("[ScreenShareGuest] Already started");
-            return;
-        }
+        if (!socket) return;
+        if (hasStartedRef.current) return;
 
         hasStartedRef.current = true;
-        console.log("[ScreenShareGuest] Starting screen share...");
+        setShowManualStart(false);
 
         try {
             setStatus("connecting");
@@ -88,20 +82,12 @@ export const ScreenShareGuest = ({
             const pc = new RTCPeerConnection(rtcConfig);
             peerConnectionRef.current = pc;
 
-            // Add stream tracks to connection
-            stream.getTracks().forEach(track => {
-                console.log("[ScreenShareGuest] Adding track:", track.kind);
-                pc.addTrack(track, stream);
-            });
+            stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
             // Handle ICE candidates
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                    console.log("[ScreenShareGuest] Sending ICE candidate");
-                    socket.emit("webrtc:ice-candidate", {
-                        sessionId,
-                        candidate: event.candidate,
-                    });
+                    socket.emit("webrtc:ice-candidate", { sessionId, candidate: event.candidate });
                 }
             };
 
@@ -112,74 +98,46 @@ export const ScreenShareGuest = ({
                     setStatus("sharing");
                 } else if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
                     cleanup();
-                    onSharingChange(false);
                 }
             };
 
-            pc.oniceconnectionstatechange = () => {
-                console.log("[ScreenShareGuest] ICE state:", pc.iceConnectionState);
-            };
-
-            // Create and send offer
-            console.log("[ScreenShareGuest] Creating offer...");
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-
-            console.log("[ScreenShareGuest] Sending offer to session:", sessionId);
-            socket.emit("webrtc:offer", {
-                sessionId,
-                offer: pc.localDescription,
-            });
-
-            console.log("[ScreenShareGuest] Offer sent, waiting for answer...");
+            socket.emit("webrtc:offer", { sessionId, offer: pc.localDescription });
 
         } catch (err: any) {
-            console.error("[ScreenShareGuest] Error:", err.message || err);
+            console.warn("[ScreenShare] Start Failed:", err.message);
+            hasStartedRef.current = false;
             cleanup();
-            onSharingChange(false);
+            setShowManualStart(true);
         }
     }, [socket, sessionId, cleanup, onSharingChange]);
 
-    // Handle incoming answer from Host
     useEffect(() => {
         if (!socket) return;
 
         const handleAnswer = async (data: { answer: RTCSessionDescriptionInit }) => {
-            console.log("[ScreenShareGuest] Received answer from host");
-            if (peerConnectionRef.current) {
+            const pc = peerConnectionRef.current;
+            if (pc && pc.signalingState === 'have-local-offer') {
                 try {
-                    await peerConnectionRef.current.setRemoteDescription(
-                        new RTCSessionDescription(data.answer)
-                    );
-                    console.log("[ScreenShareGuest] Remote description set");
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
                 } catch (err) {
-                    console.error("[ScreenShareGuest] Error setting remote description:", err);
+                    console.error("Error setting remote desc:", err);
                 }
             }
         };
 
         const handleIceCandidate = async (data: { candidate: RTCIceCandidateInit }) => {
             if (peerConnectionRef.current && data.candidate) {
-                try {
-                    await peerConnectionRef.current.addIceCandidate(
-                        new RTCIceCandidate(data.candidate)
-                    );
-                    console.log("[ScreenShareGuest] Added ICE candidate from host");
-                } catch (err) {
-                    console.error("[ScreenShareGuest] Error adding ICE candidate:", err);
-                }
+                try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch (e) {}
             }
         };
 
         const handleStreamRequest = () => {
-             console.log("[ScreenShareGuest] Received stream request from late host");
-             // If we are currently sharing, re-send the existing offer
              if (peerConnectionRef.current?.localDescription) {
-                 console.log("[ScreenShareGuest] Re-sending active offer");
-                 socket.emit("webrtc:offer", {
-                    sessionId,
-                    offer: peerConnectionRef.current.localDescription,
-                });
+                 socket.emit("webrtc:offer", { sessionId, offer: peerConnectionRef.current.localDescription });
+             } else if (isSharing && !hasStartedRef.current) {
+                 startSharing();
              }
         };
 
@@ -187,38 +145,43 @@ export const ScreenShareGuest = ({
         socket.on("webrtc:ice-candidate", handleIceCandidate);
         socket.on("webrtc:request-stream", handleStreamRequest);
 
-
         return () => {
             socket.off("webrtc:answer", handleAnswer);
             socket.off("webrtc:ice-candidate", handleIceCandidate);
             socket.off("webrtc:request-stream", handleStreamRequest);
         };
-    }, [socket]);
+    }, [socket, isSharing, startSharing]);
 
-    // Start/stop based on isSharing prop
     useEffect(() => {
-        console.log("[ScreenShareGuest] isSharing changed:", isSharing, "status:", status);
-
         if (isSharing && status === "idle" && !hasStartedRef.current) {
-            // Small delay to ensure socket is connected
             const timer = setTimeout(() => {
-                startSharing();
+                startSharing().catch(() => setShowManualStart(true));
             }, 500);
             return () => clearTimeout(timer);
         } else if (!isSharing && status !== "idle") {
             cleanup();
-            if (socket) {
-                socket.emit("webrtc:stop", { sessionId });
-            }
+            socket?.emit("webrtc:stop", { sessionId });
         }
     }, [isSharing, status, startSharing, cleanup, socket, sessionId]);
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            cleanup();
-        };
-    }, [cleanup]);
+    useEffect(() => () => cleanup(), [cleanup]);
+
+    if (!isSharing) return null;
+
+    if (showManualStart) {
+        return (
+            <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[200] animate-bounce">
+                <button 
+                    onClick={startSharing}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-3 rounded-full font-bold shadow-[0_0_20px_rgba(16,185,129,0.5)] flex items-center gap-3 transition-all transform hover:scale-105 border-2 border-white/20"
+                >
+                    <Monitor size={20} />
+                    <span>Resume Screen Sharing</span>
+                    <RefreshCw size={16} className="opacity-50" />
+                </button>
+            </div>
+        );
+    }
 
     return null;
 };

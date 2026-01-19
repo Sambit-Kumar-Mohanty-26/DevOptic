@@ -30,7 +30,21 @@ const io = new Server(server, {
 
 const sessionState = {};
 
+dotenv.config({ path: '../.env' });
+if (!process.env.DEVOPTIC_AGENT_SECRET) dotenv.config();
+
+console.log("SERVER SECRET:", process.env.DEVOPTIC_AGENT_SECRET ? "LOADED" : "MISSING");
+
 io.use((socket, next) => {
+  const auth = socket.handshake.auth;
+
+  if (auth.agentSecret && auth.agentSecret === process.env.DEVOPTIC_AGENT_SECRET) {
+    console.log(`[AUTH] Agent authenticated via Secret Key: ${socket.id}`);
+    socket.user = { sub: 'AGENT', role: 'system' };
+    socket.isAgent = true;
+    return next();
+  }
+
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error("Authentication error: No token provided"));
   const decoded = jwt.decode(token, { complete: true });
@@ -127,24 +141,24 @@ io.on('connection', (socket) => {
   });
 
   socket.on('call:request', (data) => {
-      console.log(`[CALL] ${data.type} call started by ${socket.id}`);
-      socket.to(data.sessionId).emit('call:incoming', { 
-          callerId: socket.id,
-          type: data.type || 'video'
-      });
+    console.log(`[CALL] ${data.type} call started by ${socket.id}`);
+    socket.to(data.sessionId).emit('call:incoming', {
+      callerId: socket.id,
+      type: data.type || 'video'
+    });
   });
 
   socket.on('call:accept', (data) => {
-      console.log(`[CALL] Call accepted by ${socket.id}`);
-      socket.to(data.sessionId).emit('call:accepted', { acceptorId: socket.id });
+    console.log(`[CALL] Call accepted by ${socket.id}`);
+    socket.to(data.sessionId).emit('call:accepted', { acceptorId: socket.id });
   });
 
   socket.on('call:reject', (data) => {
-      socket.to(data.sessionId).emit('call:rejected');
+    socket.to(data.sessionId).emit('call:rejected');
   });
 
   socket.on('call:end', (data) => {
-      socket.to(data.sessionId).emit('call:ended');
+    socket.to(data.sessionId).emit('call:ended');
   });
 
 
@@ -269,25 +283,55 @@ io.on('connection', (socket) => {
     socket.to(data.sessionId).emit('mode:switch', data);
   });
 
-   // Host sends code -> Server checks permission -> Sends to Guest
+  // Host sends code -> Server checks permission -> Sends to Guest
   socket.on('console:execute', (data) => {
-      const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
-      
-      // Only the Controller can execute code
-      if (socket.id === authorizedController) {
-          console.log(`[EXEC] Host ${socket.id} executing code on Guest`);
-          io.to(data.sessionId).emit('console:execute', data);
-      } else {
-          console.warn(`[EXEC] Unauthorized execution attempt from ${socket.id}`);
-          socket.emit('console:error', { 
-              args: [" Permission Denied: You must request control first."],
-              timestamp: Date.now() 
-          });
-      }
+    const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
+
+    // Only the Controller can execute code
+    if (socket.id === authorizedController) {
+      console.log(`[EXEC] Host ${socket.id} executing code on Guest`);
+      io.to(data.sessionId).emit('console:execute', data);
+    } else {
+      console.warn(`[EXEC] Unauthorized execution attempt from ${socket.id}`);
+      socket.emit('console:error', {
+        args: [" Permission Denied: You must request control first."],
+        timestamp: Date.now()
+      });
+    }
   });
 
   // Guest sends result -> Server relays to Host
   socket.on('console:result', relay('console:result'));
+  socket.on('fs:list', (data) => {
+    io.to(data.sessionId).emit('fs:list', data);
+  });
+
+  socket.on('fs:list:response', (data) => {
+    io.to(data.sessionId).emit('fs:list:response', data);
+  });
+
+  socket.on('fs:read', (data) => {
+    io.to(data.sessionId).emit('fs:read', data);
+  });
+
+  socket.on('fs:read:response', (data) => {
+    io.to(data.sessionId).emit('fs:read:response', data);
+  });
+
+  socket.on('fs:write', (data) => {
+    const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
+    if (socket.id === authorizedController) {
+      io.to(data.sessionId).emit('fs:write', data);
+    } else {
+      socket.emit('fs:error', { message: "Permission Denied: You must have control to edit files." });
+    }
+  });
+
+  socket.on('fs:write:success', (data) => {
+    io.to(data.sessionId).emit('fs:write:success', data);
+  });
+  
+
 
   socket.on('disconnect', () => {
     for (const [sessionId, state] of Object.entries(sessionState)) {
