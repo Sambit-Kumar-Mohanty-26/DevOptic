@@ -1,0 +1,6 @@
+2026/01/26-13:35:49.539 44cc Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/MANIFEST-000001
+2026/01/26-13:35:49.545 44cc Recovering log #41
+2026/01/26-13:35:49.546 44cc Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/000041.log 
+2026/01/26-13:43:05.145 990 Level-0 table #46: started
+2026/01/26-13:43:05.176 990 Level-0 table #46: 690811 bytes OK
+2026/01/26-13:43:05.178 990 Delete type=0 #41

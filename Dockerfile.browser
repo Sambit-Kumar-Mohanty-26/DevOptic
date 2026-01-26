@@ -1,0 +1,24 @@
+FROM mcr.microsoft.com/playwright:v1.42.0-jammy
+WORKDIR /app
+
+RUN groupadd -r devoptic && useradd -r -g devoptic devoptic
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY server/ ./server/
+COPY .env* ./
+
+RUN mkdir -p /app/server/storage/sessions && \
+    chown -R devoptic:devoptic /app
+
+ENV NODE_ENV=production
+ENV PORT=3001
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3001/health || exit 1
+
+USER devoptic
+CMD ["node", "server/index.js"]

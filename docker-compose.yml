@@ -1,0 +1,62 @@
+services:
+  browser-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.browser
+    container_name: devoptic-browser-engine
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DEVOPTIC_AGENT_SECRET=${DEVOPTIC_AGENT_SECRET}
+      - CLERK_ISSUER_URL=${CLERK_ISSUER_URL}
+      - NEXT_PUBLIC_SITE_URL=${NEXT_PUBLIC_SITE_URL}
+    volumes:
+      - browser_sessions:/app/server/storage/sessions
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3001/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    shm_size: '1gb'
+    networks:
+      - devoptic-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devoptic-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_SOCKET_URL=http://browser-engine:3001
+    depends_on:
+      - browser-engine
+    networks:
+      - devoptic-network
+    profiles:
+      - full
+
+volumes:
+  browser_sessions:
+    driver: local
+
+networks:
+  devoptic-network:
+    driver: bridge

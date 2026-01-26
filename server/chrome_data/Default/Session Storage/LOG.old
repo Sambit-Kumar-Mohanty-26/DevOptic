@@ -1,0 +1,17 @@
+2026/01/26-13:17:57.784 23b4 Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/MANIFEST-000001
+2026/01/26-13:17:57.785 23b4 Recovering log #63
+2026/01/26-13:17:57.786 23b4 Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/000063.log 
+2026/01/26-13:21:05.138 2c1c Level-0 table #67: started
+2026/01/26-13:21:05.150 2c1c Level-0 table #67: 477333 bytes OK
+2026/01/26-13:21:05.151 2c1c Delete type=0 #63
+2026/01/26-13:21:05.152 2c1c Compacting 4@0 + 1@1 files
+2026/01/26-13:21:05.169 2c1c Generated table #68@0: 9 keys, 477285 bytes
+2026/01/26-13:21:05.169 2c1c Compacted 4@0 + 1@1 files => 477285 bytes
+2026/01/26-13:21:05.171 2c1c compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/01/26-13:21:05.171 2c1c Delete type=2 #58
+2026/01/26-13:21:05.172 2c1c Delete type=2 #60
+2026/01/26-13:21:05.172 2c1c Delete type=2 #62
+2026/01/26-13:21:05.172 2c1c Delete type=2 #64
+2026/01/26-13:21:05.172 2c1c Delete type=2 #67
+2026/01/26-13:35:20.799 2c1c Level-0 table #70: started
+2026/01/26-13:35:20.817 2c1c Level-0 table #70: 481169 bytes OK

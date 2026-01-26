@@ -1,0 +1,18 @@
+2026/01/26-13:17:51.262 49b8 Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/MANIFEST-000001
+2026/01/26-13:17:51.267 49b8 Recovering log #36
+2026/01/26-13:17:51.267 49b8 Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/000036.log 
+2026/01/26-13:22:57.761 23b4 Level-0 table #40: started
+2026/01/26-13:22:57.766 23b4 Level-0 table #40: 29407 bytes OK
+2026/01/26-13:22:57.767 23b4 Delete type=0 #36
+2026/01/26-13:29:03.625 2c1c Level-0 table #42: started
+2026/01/26-13:29:03.644 2c1c Level-0 table #42: 20093 bytes OK
+2026/01/26-13:29:03.645 2c1c Delete type=0 #39
+2026/01/26-13:29:03.645 2c1c Compacting 4@0 + 1@1 files
+2026/01/26-13:29:03.664 2c1c Generated table #43@0: 255 keys, 681035 bytes
+2026/01/26-13:29:03.665 2c1c Compacted 4@0 + 1@1 files => 681035 bytes
+2026/01/26-13:29:03.666 2c1c compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/01/26-13:29:03.666 2c1c Delete type=2 #32
+2026/01/26-13:29:03.666 2c1c Delete type=2 #34
+2026/01/26-13:29:03.666 2c1c Delete type=2 #37
+2026/01/26-13:29:03.666 2c1c Delete type=2 #40
+2026/01/26-13:29:03.666 2c1c Delete type=2 #42

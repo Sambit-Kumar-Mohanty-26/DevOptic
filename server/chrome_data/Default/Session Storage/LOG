@@ -1,0 +1,13 @@
+2026/01/26-13:35:56.747 44cc Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/MANIFEST-000001
+2026/01/26-13:35:56.747 44cc Recovering log #66
+2026/01/26-13:35:56.750 44cc Level-0 table #70: started
+2026/01/26-13:35:56.774 44cc Level-0 table #70: 481169 bytes OK
+2026/01/26-13:35:56.775 44cc Recovering log #69
+2026/01/26-13:35:56.776 44cc Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/000069.log 
+2026/01/26-13:35:56.777 44cc Delete type=0 #66
+2026/01/26-13:39:36.595 44cc Level-0 table #72: started
+2026/01/26-13:39:36.617 44cc Level-0 table #72: 477912 bytes OK
+2026/01/26-13:39:36.619 44cc Delete type=0 #69
+2026/01/26-13:43:05.135 5dac Level-0 table #74: started
+2026/01/26-13:43:05.158 5dac Level-0 table #74: 477862 bytes OK
+2026/01/26-13:43:05.161 5dac Delete type=0 #71

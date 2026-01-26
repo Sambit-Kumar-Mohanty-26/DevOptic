@@ -55,8 +55,7 @@ export const DrawingCanvas = ({ mode, tool, color }: DrawingCanvasProps) => {
       canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
       canvas.freeDrawingBrush.width = 3;
       canvas.freeDrawingBrush.color = color;
-    } 
-    
+    }
     else if (tool === "rect") {
       let rect: fabric.Rect | null = null;
       let startX: number, startY: number;
@@ -112,10 +111,9 @@ export const DrawingCanvas = ({ mode, tool, color }: DrawingCanvasProps) => {
   }, [tool, color]);
 
   return (
-    <div 
-      className={`absolute inset-0 z-20 pointer-events-none transition-opacity duration-500 ${
-        mode === "pixel" ? "opacity-100 pointer-events-auto" : "opacity-0"
-      }`}
+    <div
+      className={`absolute inset-0 z-20 pointer-events-none transition-opacity duration-500 ${mode === "pixel" ? "opacity-100 pointer-events-auto" : "opacity-0"
+        }`}
     >
       <canvas ref={canvasRef} className="w-full h-full" />
     </div>

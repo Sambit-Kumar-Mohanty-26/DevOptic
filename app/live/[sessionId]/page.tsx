@@ -10,7 +10,10 @@ import {
   LayoutTemplate, ArrowRight, Triangle, AppWindow, Grid3x3,
   Monitor, Eye, Video, VideoOff,
   Phone,
-  Folder
+  Folder,
+  Server,
+  Power,
+  Settings
 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { useAuth } from "@clerk/nextjs";
@@ -33,6 +36,15 @@ import { TelemetryPanel } from "@/components/live/TelemetryPanel";
 import { InspectorPanel } from "@/components/live/InspectorPanel";
 import { CallInterface, CallInterfaceRef } from "@/components/live/CallInterface";
 import { FileEditor } from "@/components/live/FileEditor";
+import { BrowserToolbar } from "@/components/live/BrowserToolbar";
+import { HistoryPanel } from "@/components/live/HistoryPanel";
+import { BookmarkPanel } from "@/components/live/BookmarkPanel";
+import { FindBar } from "@/components/live/FindBar";
+import { TabBar } from "@/components/live/TabBar";
+import { KeyboardShortcuts } from "@/components/live/KeyboardShortcuts";
+import { ContextMenu } from "@/components/live/ContextMenu";
+import { DevToolsPanel } from "@/components/live/DevToolsPanel";
+import { PrivacyOverlay } from "@/components/live/PrivacyOverlay";
 
 interface PageProps {
   params: Promise<{ sessionId: string }>;
@@ -63,6 +75,18 @@ export default function LiveWorkspace({ params }: PageProps) {
   const { getToken } = useAuth();
   const [rightPanelTab, setRightPanelTab] = useState<"telemetry" | "files">("telemetry");
 
+  // Server Browser Mode State
+  const [isServerBrowserMode, setIsServerBrowserMode] = useState(false);
+  const [serverBrowserUrl, setServerBrowserUrl] = useState("");
+  const [isServerBrowserConnected, setIsServerBrowserConnected] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isBookmarksOpen, setIsBookmarksOpen] = useState(false);
+  const [isFindOpen, setIsFindOpen] = useState(false);
+  const [tabs, setTabs] = useState<any[]>([]);
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
+  const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
+
+
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvas = useRef<fabric.Canvas | null>(null);
@@ -75,6 +99,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const overlayObjectsRef = useRef<any[]>([]);
   const whiteboardObjectsRef = useRef<any[]>([]);
   const prevPixelSubModeRef = useRef<"overlay" | "whiteboard">("overlay");
+  const modeRef = useRef<"debug" | "pixel">("debug");
 
   const stabilizePath = (canvas: fabric.Canvas, dirtyPath: fabric.Path) => {
     const pathData = (dirtyPath.path as any[]);
@@ -120,18 +145,24 @@ export default function LiveWorkspace({ params }: PageProps) {
           console.log("Socket Connected");
           setIsConnected(true);
           toast.success("Connected to server");
-        });
-
-        socket.on("connect", () => {
-          console.log("Socket Connected");
-          setIsConnected(true);
-          toast.success("Connected to server");
+          socket.emit('browser:check', { sessionId });
         });
 
         socket.on("disconnect", (reason) => {
           console.warn("Socket Disconnected:", reason);
           setIsConnected(false);
+          setIsServerBrowserConnected(false);
           toast.error("Connection lost. Reconnecting...");
+        });
+
+        socket.on('browser:status', (data: { active: boolean, url?: string }) => {
+          if (data.active) {
+            console.log('[ServerBrowser] Found active session, resuming...');
+            setIsServerBrowserMode(true);
+            setIsServerBrowserConnected(true);
+            if (data.url) setServerBrowserUrl(data.url);
+            toast.success("Resumed server browser session");
+          }
         });
 
         socket.on('role:state', (data) => {
@@ -210,8 +241,8 @@ export default function LiveWorkspace({ params }: PageProps) {
           const h = canvas.height || 1;
 
           const newPoint = ['L', x * w, y * h];
-          (pathObj.path as any[]).push(newPoint);
-
+          const newPathData = [...(pathObj.path as any[]), newPoint];
+          pathObj.set({ path: newPathData });
           pathObj.set({ dirty: true });
           canvas.requestRenderAll();
         });
@@ -239,15 +270,9 @@ export default function LiveWorkspace({ params }: PageProps) {
           if (!canvas) return;
 
           if (objData.layerMode && objData.layerMode !== pixelSubMode) {
-            console.log(`[Layer] Received ${objData.layerMode} object, storing in background.`);
-
-            if (objData.layerMode === 'overlay') {
-              overlayObjectsRef.current.push(objData);
-            } else {
-              whiteboardObjectsRef.current.push(objData);
-            }
-            return;
+            console.log(`[Layer] Received ${objData.layerMode} object while in ${pixelSubMode}. Displaying anyway.`);
           }
+
 
           const w = canvas.width || 1;
           const h = canvas.height || 1;
@@ -276,6 +301,13 @@ export default function LiveWorkspace({ params }: PageProps) {
             } else {
               fabric.util.enlivenObjects([options]).then((enlivenedObjects: any[]) => {
                 enlivenedObjects.forEach((obj) => {
+                  const alreadyExists = canvas.getObjects().find((o: any) => (o as any).id === options.id);
+                  if (alreadyExists) {
+                    alreadyExists.set(options);
+                    alreadyExists.setCoords();
+                    return;
+                  }
+
                   (obj as any).isRemote = true;
                   (obj as any).id = options.id;
                   (obj as any).layerMode = options.layerMode;
@@ -442,6 +474,24 @@ export default function LiveWorkspace({ params }: PageProps) {
             setMode('debug');
           }
         });
+
+        socket.on('browser:navigated', (data: { url: string }) => {
+          console.log('[ServerBrowser] Navigated to:', data.url);
+          setIsServerBrowserConnected(true);
+          toast.dismiss('server-browser-nav');
+          toast.success(`Loaded: ${new URL(data.url).hostname}`, { duration: 2000 });
+        });
+
+        socket.on('browser:error', (data: { message: string }) => {
+          console.error('[ServerBrowser] Error:', data.message);
+          toast.dismiss('server-browser-nav');
+          toast.error(`Browser Error: ${data.message}`);
+        });
+
+        socket.on('browser:created', () => {
+          console.log('[ServerBrowser] Session created');
+          setIsServerBrowserConnected(true);
+        });
       } catch (err) {
         console.error("Failed to initialize socket:", err);
       }
@@ -532,6 +582,36 @@ export default function LiveWorkspace({ params }: PageProps) {
 
     fabricCanvas.current = canvas;
 
+    canvas.on("mouse:wheel", (opt) => {
+      // Only allow scrolling in Whiteboard mode to act as infinite canvas
+      if (modeRef.current === 'pixel' && prevPixelSubModeRef.current === 'whiteboard') {
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
+
+        if (opt.e.ctrlKey) {
+          // Zoom
+          const delta = opt.e.deltaY;
+          let zoom = canvas.getZoom();
+          zoom *= 0.999 ** delta;
+          if (zoom > 20) zoom = 20;
+          if (zoom < 0.01) zoom = 0.01;
+          canvas.zoomToPoint(new fabric.Point(opt.e.offsetX, opt.e.offsetY), zoom);
+        } else {
+          // Pan
+          const vpt = canvas.viewportTransform;
+          if (vpt) {
+            vpt[4] -= opt.e.deltaX;
+            vpt[5] -= opt.e.deltaY;
+            const activeObject = canvas.getActiveObject();
+            if (activeObject) {
+              activeObject.setCoords();
+            }
+            canvas.requestRenderAll();
+          }
+        }
+      }
+    });
+
     canvas.on("object:added", (e: any) => {
       const obj = e.target;
       if (!obj.id) obj.id = crypto.randomUUID();
@@ -584,32 +664,28 @@ export default function LiveWorkspace({ params }: PageProps) {
     const prevMode = prevPixelSubModeRef.current;
 
     if (prevMode !== pixelSubMode) {
-      // Filter out Magic Highlight and Streaming cursors
       const currentObjects = canvas.getObjects().filter((obj: any) => {
         return obj.id !== 'magic-highlight' && !(obj as any).isStreaming;
       });
 
-      // Serialize and include 'layerMode'
+
       const serializedObjects = currentObjects.map((obj: any) => {
         const data = obj.toObject(['id', 'isRemote', 'layerMode']);
         data.layerMode = prevMode;
         return data;
       });
 
-      //  Save to appropriate Ref
       if (prevMode === 'overlay') {
         overlayObjectsRef.current = serializedObjects;
       } else {
         whiteboardObjectsRef.current = serializedObjects;
       }
 
-      // Clear Canvas (Remove ONLY user objects, keep system stuff if any)
       currentObjects.forEach((obj: any) => {
         (obj as any).isRemote = true;
         canvas.remove(obj);
       });
 
-      // Restore Objects for the new mode
       const objectsToRestore = pixelSubMode === 'overlay'
         ? overlayObjectsRef.current
         : whiteboardObjectsRef.current;
@@ -620,10 +696,8 @@ export default function LiveWorkspace({ params }: PageProps) {
             (obj as any).isRemote = true;
             (obj as any).layerMode = pixelSubMode;
             canvas.add(obj);
-
             obj.setCoords();
           });
-
           canvas.requestRenderAll();
         });
       }
@@ -631,7 +705,6 @@ export default function LiveWorkspace({ params }: PageProps) {
       prevPixelSubModeRef.current = pixelSubMode;
     }
 
-    // Toggle Background
     if (pixelSubMode === 'whiteboard') {
       canvas.backgroundColor = 'transparent';
     } else {
@@ -660,7 +733,6 @@ export default function LiveWorkspace({ params }: PageProps) {
 
       canvas.on("mouse:down", (o) => {
         const pointer = canvas.getScenePoint(o.e);
-
         const w = canvas.width || 1;
         const h = canvas.height || 1;
 
@@ -684,8 +756,15 @@ export default function LiveWorkspace({ params }: PageProps) {
 
       let isDown = false;
       let currentPath: fabric.Path | null = null;
+      let isManipulating = false;
 
       canvas.on("mouse:down", (o) => {
+        if (o.target) {
+          isManipulating = true;
+          return;
+        }
+
+        isManipulating = false;
         isDown = true;
         const pointer = canvas.getScenePoint(o.e);
         const w = canvas.width || 1;
@@ -702,14 +781,11 @@ export default function LiveWorkspace({ params }: PageProps) {
           strokeLineJoin: 'round',
           selectable: false,
           evented: false,
-          // @ts-ignore
-          id: id,
           objectCaching: false,
         });
 
         (currentPath as any).id = id;
-        (currentPath as any).isRemote = true;
-
+        (currentPath as any).isStreaming = true;
         canvas.add(currentPath);
 
         socketRef.current?.emit("cursor:down", {
@@ -723,13 +799,15 @@ export default function LiveWorkspace({ params }: PageProps) {
       });
 
       canvas.on("mouse:move", (o) => {
-        if (!isDown || !currentPath) return;
+        if (!isDown || !currentPath || isManipulating) return;
+
         const pointer = canvas.getScenePoint(o.e);
         const w = canvas.width || 1;
         const h = canvas.height || 1;
 
         const newPoint = ['L', pointer.x, pointer.y];
-        (currentPath.path as any[]).push(newPoint);
+        const newPathData = [...(currentPath.path as any[]), newPoint];
+        currentPath.set({ path: newPathData });
 
         currentPath.set({ dirty: true });
         canvas.requestRenderAll();
@@ -744,12 +822,23 @@ export default function LiveWorkspace({ params }: PageProps) {
 
       canvas.on("mouse:up", () => {
         isDown = false;
+        isManipulating = false;
+
         if (currentPath) {
           const cleanPath = stabilizePath(canvas, currentPath);
+
+          cleanPath.set({
+            lockUniScaling: false,
+            selectable: true,
+            evented: true
+          });
+
           (cleanPath as any).isRemote = false;
+          delete (cleanPath as any).isStreaming;
 
           canvas.add(cleanPath);
           cleanPath.setCoords();
+
           canvas.setActiveObject(cleanPath);
 
           socketRef.current?.emit("cursor:up", { sessionId, id: (cleanPath as any).id });
@@ -806,52 +895,78 @@ export default function LiveWorkspace({ params }: PageProps) {
 
       let shape: any = null;
       let isDown = false;
-      let origX = 0; let origY = 0;
+      let origX = 0;
+      let origY = 0;
       let activeShapeId: string | null = null;
 
       canvas.on("mouse:down", (o) => {
         isDown = true;
         const pointer = canvas.getScenePoint(o.e);
-        origX = pointer.x; origY = pointer.y;
+        origX = pointer.x;
+        origY = pointer.y;
 
-        //Generate the ID once on mouse down
         activeShapeId = crypto.randomUUID();
 
         const commonProps = {
-          left: origX, top: origY,
+          left: origX,
+          top: origY,
           fill: 'transparent',
           stroke: activeColor,
           strokeWidth: brushSize,
           selectable: false,
-          id: activeShapeId
+          evented: false,
+          id: activeShapeId,
+          lockUniScaling: false
         };
 
-        if (activeTool === "rect") shape = new fabric.Rect({ ...commonProps, width: 0, height: 0 });
-        else if (activeTool === "circle") shape = new fabric.Circle({ ...commonProps, radius: 0 });
-        else if (activeTool === "triangle") shape = new fabric.Triangle({ ...commonProps, width: 0, height: 0 });
-        else if (activeTool === "diamond") shape = new fabric.Rect({ ...commonProps, width: 0, height: 0, angle: 45, originX: 'center', originY: 'center' });
+        if (activeTool === "rect") {
+          shape = new fabric.Rect({ ...commonProps, width: 0, height: 0 });
+        }
+        else if (activeTool === "circle") {
+          shape = new fabric.Circle({ ...commonProps, radius: 0 });
+        }
+        else if (activeTool === "triangle") {
+          shape = new fabric.Triangle({ ...commonProps, width: 0, height: 0 });
+        }
+        else if (activeTool === "diamond") {
+          shape = new fabric.Rect({
+            ...commonProps,
+            width: 0,
+            height: 0,
+            angle: 45,
+            originX: 'center',
+            originY: 'center'
+          });
+        }
+        else if (activeTool === "arrow") {
+          shape = new fabric.Path(`M ${origX} ${origY} L ${origX} ${origY}`, {
+            ...commonProps,
+            strokeWidth: brushSize,
+            fill: 'transparent',
+            strokeLineCap: 'round',
+            strokeLineJoin: 'round'
+          });
+        }
 
         if (shape) {
+          (shape as any).excludeFromSocket = true;
           canvas.add(shape);
-          emitObjectUpdate(shape);
         }
       });
 
       canvas.on("mouse:move", (o) => {
-        if (!isDown) return;
+        if (!isDown || !shape) return;
         const pointer = canvas.getScenePoint(o.e);
 
         if (activeTool === "arrow") {
-          if (shape) {
-            (shape as any).__isUpdating = true;
-            canvas.remove(shape);
-          }
+          (shape as any).__isUpdating = true;
+          canvas.remove(shape);
+
           const x1 = origX;
           const y1 = origY;
           const x2 = pointer.x;
           const y2 = pointer.y;
 
-          // CALCULATE ARROW HEAD ANGLES
           const angle = Math.atan2(y2 - y1, x2 - x1);
           const headLen = 20;
 
@@ -860,7 +975,6 @@ export default function LiveWorkspace({ params }: PageProps) {
           const x3_arrow = x2 - headLen * Math.cos(angle + Math.PI / 6);
           const y3_arrow = y2 - headLen * Math.sin(angle + Math.PI / 6);
 
-          // DRAW LINE + ARROW HEAD PATH
           const pathData = `M ${x1} ${y1} L ${x2} ${y2} M ${x2} ${y2} L ${x2_arrow} ${y2_arrow} M ${x2} ${y2} L ${x3_arrow} ${y3_arrow}`;
 
           shape = new fabric.Path(pathData, {
@@ -873,36 +987,49 @@ export default function LiveWorkspace({ params }: PageProps) {
             evented: false,
             id: activeShapeId,
             padding: 15,
-            excludeFromSocket: true
+            excludeFromSocket: true,
+            lockUniScaling: false
           });
 
           canvas.add(shape);
-
-          //Manually emit the update here for real-time arrow sync
-          throttledEmit(shape);
-
-        } else if (shape) {
-          if (activeTool === "circle") {
-            const radius = Math.sqrt(Math.pow(pointer.x - origX, 2) + Math.pow(pointer.y - origY, 2)) / 2;
-            shape.set({ radius: radius });
-          } else {
-            shape.set({ width: Math.abs(origX - pointer.x), height: Math.abs(origY - pointer.y) });
-            if (origX > pointer.x) shape.set({ left: pointer.x });
-            if (origY > pointer.y) shape.set({ top: pointer.y });
-          }
-          shape.setCoords();
-          throttledEmit(shape);
         }
+        else if (activeTool === "circle") {
+          const radius = Math.sqrt(Math.pow(pointer.x - origX, 2) + Math.pow(pointer.y - origY, 2)) / 2;
+          shape.set({ radius: radius });
+        }
+        else {
+          shape.set({
+            width: Math.abs(origX - pointer.x),
+            height: Math.abs(origY - pointer.y)
+          });
+          if (origX > pointer.x) shape.set({ left: pointer.x });
+          if (origY > pointer.y) shape.set({ top: pointer.y });
+        }
+
+        shape.setCoords();
         canvas.requestRenderAll();
+        throttledEmit(shape);
       });
 
       canvas.on("mouse:up", () => {
         isDown = false;
         if (shape) {
+          shape.set({
+            selectable: true,
+            evented: true,
+            lockUniScaling: false
+          });
+
+          delete (shape as any).excludeFromSocket;
           shape.setCoords();
-          shape.set({ selectable: true, evented: true });
+
           emitObjectUpdate(shape);
+
+          //Select the shape immediately before switching tools
+          canvas.setActiveObject(shape);
+          canvas.renderAll();
         }
+        shape = null;
         setActiveTool("select");
       });
     }
@@ -1069,7 +1196,7 @@ export default function LiveWorkspace({ params }: PageProps) {
         sessionId,
         percentX,
         percentY,
-        selector, // Send selector
+        selector,
         userId: socketRef.current?.id
       });
     };
@@ -1118,6 +1245,7 @@ export default function LiveWorkspace({ params }: PageProps) {
     if (mode === newMode) return;
 
     setMode(newMode);
+    modeRef.current = newMode;
 
     // Guest: Emit mode change to sync with Host & control screen sharing
     if (role === 'guest') {
@@ -1141,6 +1269,61 @@ export default function LiveWorkspace({ params }: PageProps) {
 
   const triggerColorPicker = () => colorInputRef.current?.click();
 
+  const handleServerBrowserToggle = () => {
+    if (!isServerBrowserMode && socketRef.current) {
+      socketRef.current.emit('browser:create', { sessionId });
+      setIsServerBrowserMode(true);
+      toast.info('Server Browser Mode enabled', { icon: '🖥️' });
+      setIsServerBrowserMode(false);
+      toast.info('Server Browser Mode disabled');
+    }
+  };
+
+  // Sync Server Browser State (Guests)
+  useEffect(() => {
+    if (!socketRef.current) return;
+
+    const handleBrowserActive = (data: { active: boolean }) => {
+      setIsServerBrowserMode(data.active);
+      if (data.active) {
+        toast.info('Host enabled Server Browser Mode', { icon: '🖥️' });
+      } else {
+        toast.info('Server Browser Mode disabled');
+      }
+    };
+
+    socketRef.current.on('browser:active', handleBrowserActive);
+
+    // Check status on join
+    socketRef.current.emit('browser:check', { sessionId });
+    socketRef.current.on('browser:status', (data: any) => {
+      if (data.active) setIsServerBrowserMode(true);
+    });
+
+    return () => {
+      socketRef.current?.off('browser:active', handleBrowserActive);
+      socketRef.current?.off('browser:status');
+    };
+  }, [sessionId]);
+
+  const handleServerBrowserNavigate = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!socketRef.current || !serverBrowserUrl) return;
+
+    let formattedUrl = serverBrowserUrl;
+    if (!/^https?:\/\//i.test(serverBrowserUrl)) {
+      formattedUrl = 'https://' + serverBrowserUrl;
+    }
+
+    socketRef.current.emit('browser:navigate', {
+      sessionId,
+      url: formattedUrl
+    });
+
+    toast.loading('Navigating...', { id: 'server-browser-nav' });
+  };
+
+
   return (
     <div className="h-screen w-full bg-[#020617] text-white flex flex-col overflow-hidden font-sans">
       <header className="h-16 border-b border-white/5 bg-slate-950/80 backdrop-blur-xl z-50 flex items-center justify-between px-6 shrink-0">
@@ -1161,21 +1344,21 @@ export default function LiveWorkspace({ params }: PageProps) {
 
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-lg p-1 mr-2">
-             <button 
-                onClick={() => callRef.current?.startCall('audio')}
-                className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-emerald-400 transition-colors"
-                title="Voice Call"
-             >
-                <Phone size={14} />
-             </button>
-             <div className="w-px h-4 bg-white/10" />
-             <button 
-                onClick={() => callRef.current?.startCall('video')}
-                className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-emerald-400 transition-colors"
-                title="Video Call"
-             >
-                <Video size={14} />
-             </button>
+            <button
+              onClick={() => callRef.current?.startCall('audio')}
+              className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-emerald-400 transition-colors"
+              title="Voice Call"
+            >
+              <Phone size={14} />
+            </button>
+            <div className="w-px h-4 bg-white/10" />
+            <button
+              onClick={() => callRef.current?.startCall('video')}
+              className="p-1.5 hover:bg-white/10 rounded text-slate-400 hover:text-emerald-400 transition-colors"
+              title="Video Call"
+            >
+              <Video size={14} />
+            </button>
           </div>
           {role === 'host' && (
             <button
@@ -1184,6 +1367,21 @@ export default function LiveWorkspace({ params }: PageProps) {
             >
               {copied ? <Check size={14} className="text-emerald-400" /> : <Share2 size={14} />}
               {copied ? "Copied" : "Invite"}
+            </button>
+          )}
+
+          {/* Server Browser Mode Toggle (Host Only) */}
+          {role === 'host' && mode === 'debug' && (
+            <button
+              onClick={handleServerBrowserToggle}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${isServerBrowserMode
+                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400'
+                : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                }`}
+              title={isServerBrowserMode ? "Disable Server Browser" : "Enable Server Browser"}
+            >
+              <Server size={14} />
+              {isServerBrowserMode ? "Server ON" : "Server"}
             </button>
           )}
 
@@ -1274,30 +1472,103 @@ export default function LiveWorkspace({ params }: PageProps) {
             </div>
           )}
           <div className="w-full h-full rounded-2xl border border-white/10 shadow-2xl overflow-hidden relative flex flex-col">
-            {pixelSubMode === 'overlay' || mode === 'debug' ? (
-              <div className="h-12 bg-slate-900/50 border-b border-white/5 flex items-center px-4 gap-4 z-40 relative">
-                <div className="flex items-center gap-3 shrink-0">
-                  <div className="flex gap-1.5 mr-2">
-                    <div className="w-3 h-3 rounded-full bg-red-500/20 border border-red-500/50" />
-                    <div className="w-3 h-3 rounded-full bg-yellow-500/20 border border-yellow-500/50" />
-                    <div className="w-3 h-3 rounded-full bg-green-500/20 border border-green-500/50" />
-                  </div>
-                  <button onClick={() => window.history.back()} className="text-slate-500 hover:text-white transition-colors"><ChevronLeft size={16} /></button>
-                  <button onClick={handleRefresh} className={`text-slate-500 hover:text-white transition-colors ${isLoading ? 'animate-spin' : ''}`}><RotateCw size={14} /></button>
+            {(pixelSubMode === 'overlay' || mode === 'debug' || isServerBrowserMode) ? (
+
+              <div className={`flex items-center px-4 gap-4 shrink-0 transition-all duration-300 z-50 ${isServerBrowserMode
+                ? 'h-11 bg-[#252526] border-b border-black/50 shadow-lg'
+                : 'h-14 bg-slate-900/20 backdrop-blur-md border-b border-white/5'
+                }`}>
+
+                <div className="flex gap-2 shrink-0 group">
+                  <div className="w-3 h-3 rounded-full border border-black/10 shadow-sm transition-transform hover:scale-110" style={{ backgroundColor: '#FF5F56' }} />
+                  <div className="w-3 h-3 rounded-full border border-black/10 shadow-sm transition-transform hover:scale-110" style={{ backgroundColor: '#FFBD2E' }} />
+                  <div className="w-3 h-3 rounded-full border border-black/10 shadow-sm transition-transform hover:scale-110" style={{ backgroundColor: '#27C93F' }} />
                 </div>
-                <form onSubmit={handleUrlSubmit} className="flex-1 flex items-center relative group">
-                  <Globe className="absolute left-3 w-3 h-3 text-cyan-500/50" />
-                  <input value={inputUrl} onChange={(e) => setInputUrl(e.target.value)} className="w-full bg-black/60 border border-white/10 rounded-full pl-9 pr-10 py-1.5 text-[11px] text-slate-300 font-mono focus:outline-none focus:border-cyan-500/50 transition-all" placeholder="Search..." />
-                </form>
+
+                {/* Server Browser Toolbar */}
+                {isServerBrowserMode ? (
+                  <div className="flex-1 flex gap-4 min-w-0 items-center">
+                    <TabBar
+                      sessionId={sessionId}
+                      socket={socketRef.current}
+                      tabs={tabs}
+                      onTabChange={setTabs}
+                    />
+                    <BrowserToolbar
+                      sessionId={sessionId}
+                      socket={socketRef.current}
+                      isActive={isServerBrowserMode}
+                      onHistoryOpen={() => setIsHistoryOpen(true)}
+                      onBookmarksOpen={() => setIsBookmarksOpen(true)}
+                      onFindOpen={() => setIsFindOpen(!isFindOpen)}
+                      onDevToolsToggle={() => setIsDevToolsOpen(!isDevToolsOpen)}
+                    />
+                  </div>
+                ) : (
+                  // Guest / Whiteboard Toolbar (Inline)
+                  <div className="flex-1 flex items-center justify-between text-slate-400">
+                    <div className="flex items-center gap-3">
+                      <LayoutTemplate size={16} />
+                      <span className="text-xs font-bold tracking-wider">WHITEBOARD CANVAS</span>
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (inputUrl.trim()) {
+                          setIsServerBrowserMode(true);
+                          let url = 'https://' + inputUrl.replace(/^https?:\/\//i, '');
+                          if (socketRef.current) {
+                            socketRef.current.emit('browser:create', { sessionId, url });
+                          }
+                        }
+                      }}
+                      className="flex items-center bg-black/40 border border-white/10 rounded-full px-3 py-1 w-64 focus-within:w-80 transition-all hover:bg-black/60 focus-within:border-cyan-500/50"
+                    >
+                      <Search size={12} className="mr-2 opacity-50" />
+                      <input
+                        value={inputUrl}
+                        onChange={(e) => setInputUrl(e.target.value)}
+                        className="bg-transparent border-none outline-none text-[11px] text-slate-300 w-full font-mono placeholder:text-slate-600"
+                        placeholder="Type URL to browse..."
+                      />
+                    </form>
+                  </div>
+                )}
+
+                {/* Server Mode Toggle Button */}
+                <div className="pl-4 ml-auto border-l border-white/10">
+                  <button
+                    onClick={() => {
+                      const newMode = !isServerBrowserMode;
+                      setIsServerBrowserMode(newMode);
+                      if (newMode) {
+                        socketRef.current?.emit('browser:create', { sessionId });
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all ${isServerBrowserMode
+                      ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20'
+                      : 'bg-transparent border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/5'
+                      }`}
+                    title={isServerBrowserMode ? "Turn Off Server Browser" : "Turn On Server Browser"}
+                  >
+                    <Power size={14} className={isServerBrowserMode ? "drop-shadow-[0_0_5px_rgba(52,211,153,0.8)]" : ""} />
+                  </button>
+                </div>
               </div>
             ) : (
-              <div className="h-12 bg-white border-b border-slate-200 flex items-center px-4 justify-between z-40">
-                <span className="text-xs font-bold text-slate-500 flex items-center gap-2"><LayoutTemplate size={14} /> WHITEBOARD CANVAS</span>
-                <div className="text-[10px] text-slate-400 font-mono">Infinite Canvas Active</div>
+              <div className="h-10 bg-slate-950 border-b border-white/10 flex items-center px-4 justify-between z-40">
+                <span className="text-xs font-bold text-slate-600 flex items-center gap-2">PIXEL CANVAS</span>
               </div>
             )}
 
             <div className="flex-1 relative overflow-hidden" ref={containerRef}
+              onContextMenu={(e) => {
+                if (isServerBrowserMode) {
+                  e.preventDefault();
+                  setContextMenu({ x: e.pageX, y: e.pageY });
+                }
+              }}
               style={{
                 backgroundColor: pixelSubMode === 'whiteboard' && mode === 'pixel' ? '#ffffff' : 'transparent',
                 backgroundImage: pixelSubMode === 'whiteboard' && mode === 'pixel' ? 'radial-gradient(#cbd5e1 1px, transparent 1px)' : 'none',
@@ -1307,7 +1578,7 @@ export default function LiveWorkspace({ params }: PageProps) {
               <div
                 className={`absolute inset-0 z-20`}
                 style={{
-                  pointerEvents: mode === "pixel" && activeTool !== 'select' ? 'auto' : 'none',
+                  pointerEvents: mode === "pixel" && (activeTool !== 'select' || pixelSubMode === 'whiteboard') ? 'auto' : 'none',
                 }}
               >
                 <canvas
@@ -1378,7 +1649,7 @@ export default function LiveWorkspace({ params }: PageProps) {
                 />
               )}
 
-              {(pixelSubMode === 'overlay' || mode === 'debug') && (
+              {(pixelSubMode === 'overlay' || mode === 'debug') && !isServerBrowserMode && (
                 <iframe key={`${targetUrl}-${refreshKey}`}
                   src={`/api/proxy?url=${encodeURIComponent(targetUrl)}`}
                   className="w-full h-full border-none absolute inset-0 z-10"
@@ -1386,9 +1657,16 @@ export default function LiveWorkspace({ params }: PageProps) {
                   onLoad={() => setIsLoading(false)} />
               )}
 
-              {role === 'host' && mode === 'debug' && (
+              {role === 'host' && (mode === 'debug' || (mode === 'pixel' && isServerBrowserMode)) && (
                 <div className="absolute inset-0 z-10">
-                  <ScreenShareHost sessionId={sessionId} socket={socketRef.current} hasControl={hasControl} activeTool={activeTool} />
+                  <ScreenShareHost
+                    sessionId={sessionId}
+                    socket={socketRef.current}
+                    hasControl={hasControl}
+                    activeTool={activeTool}
+                    isServerBrowserMode={isServerBrowserMode}
+                    onInspectElement={(el) => setInspectedElement(el)}
+                  />
                 </div>
               )}
 
@@ -1400,6 +1678,11 @@ export default function LiveWorkspace({ params }: PageProps) {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/* Privacy Overlay */}
+              {isServerBrowserMode && (
+                <PrivacyOverlay sessionId={sessionId} socket={socketRef.current} />
+              )}
 
 
               <AnimatePresence>
@@ -1441,45 +1724,42 @@ export default function LiveWorkspace({ params }: PageProps) {
               <div className="flex border-b border-white/5 shrink-0">
                 <button
                   onClick={() => setRightPanelTab("telemetry")}
-                  className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 uppercase tracking-wider transition-colors ${
-                    rightPanelTab === "telemetry" 
-                      ? "text-cyan-400 bg-cyan-500/5 border-b-2 border-cyan-500" 
-                      : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-                  }`}
+                  className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 uppercase tracking-wider transition-colors ${rightPanelTab === "telemetry"
+                    ? "text-cyan-400 bg-cyan-500/5 border-b-2 border-cyan-500"
+                    : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                    }`}
                 >
                   <Cpu size={14} /> Telemetry
                 </button>
                 <button
                   onClick={() => setRightPanelTab("files")}
-                  className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 uppercase tracking-wider transition-colors ${
-                    rightPanelTab === "files" 
-                      ? "text-blue-400 bg-blue-500/5 border-b-2 border-blue-500" 
-                      : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-                  }`}
+                  className={`flex-1 py-3 text-xs font-bold flex items-center justify-center gap-2 uppercase tracking-wider transition-colors ${rightPanelTab === "files"
+                    ? "text-blue-400 bg-blue-500/5 border-b-2 border-blue-500"
+                    : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                    }`}
                 >
                   <Folder size={14} /> Files
                 </button>
               </div>
-            {rightPanelTab === "telemetry" ? (
-                // EXISTING TELEMETRY UI
+              {rightPanelTab === "telemetry" ? (
                 <>
 
-              <div className="p-4 font-mono text-[10px] space-y-3 border-b border-white/5 shrink-0 max-h-48 overflow-y-auto">
-                <LogEntry type="info" text="PROXY_TUNNEL_ESTABLISHED" />
-                <LogEntry type="success" text="CANVAS_LAYER_MOUNTED" />
-                <LogEntry type="info" text={`WS_STATUS: ${socketRef.current?.connected ? 'CONNECTED' : 'CONNECTING...'}`} />
-                <LogEntry type={role ? "success" : "info"} text={`ROLE: ${role?.toUpperCase() || 'NOT_SELECTED'}`} />
-              </div>
+                  <div className="p-4 font-mono text-[10px] space-y-3 border-b border-white/5 shrink-0 max-h-48 overflow-y-auto">
+                    <LogEntry type="info" text="PROXY_TUNNEL_ESTABLISHED" />
+                    <LogEntry type="success" text="CANVAS_LAYER_MOUNTED" />
+                    <LogEntry type="info" text={`WS_STATUS: ${socketRef.current?.connected ? 'CONNECTED' : 'CONNECTING...'}`} />
+                    <LogEntry type={role ? "success" : "info"} text={`ROLE: ${role?.toUpperCase() || 'NOT_SELECTED'}`} />
+                  </div>
 
-              {role === "host" && (
+                  {role === "host" && (
+                    <div className="flex-1 overflow-hidden relative">
+                      <TelemetryPanel sessionId={sessionId} socket={socketRef.current} />
+                    </div>
+                  )}
+                </>
+              ) : (
                 <div className="flex-1 overflow-hidden relative">
-                  <TelemetryPanel sessionId={sessionId} socket={socketRef.current} />
-                </div>
-              )}
-              </>
-             ) : (
-                <div className="flex-1 overflow-hidden relative">
-                   <FileEditor sessionId={sessionId} socket={socketRef.current} />
+                  <FileEditor sessionId={sessionId} socket={socketRef.current} />
                 </div>
               )}
             </motion.aside>
@@ -1500,14 +1780,82 @@ export default function LiveWorkspace({ params }: PageProps) {
             <CursorControl sessionId={sessionId} socket={socketRef.current} controlGranted={controlGranted} />
           </>
         )}
-        <CallInterface 
-            ref={callRef} 
-            sessionId={sessionId} 
-            socket={socketRef.current} 
-            role={role} 
+        <CallInterface
+          ref={callRef}
+          sessionId={sessionId}
+          socket={socketRef.current}
+          role={role}
         />
 
       </div>
+      {/* Browser Features Overlays */}
+      <HistoryPanel
+        sessionId={sessionId}
+        socket={socketRef.current}
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        onNavigate={(url) => {
+          if (socketRef.current) socketRef.current.emit("browser:navigate", { sessionId, url });
+        }}
+      />
+      <BookmarkPanel
+        sessionId={sessionId}
+        socket={socketRef.current}
+        isOpen={isBookmarksOpen}
+        onClose={() => setIsBookmarksOpen(false)}
+        onNavigate={(url) => {
+          if (socketRef.current) socketRef.current.emit("browser:navigate", { sessionId, url });
+        }}
+      />
+      <KeyboardShortcuts
+        sessionId={sessionId}
+        socket={socketRef.current}
+        isServerBrowserMode={isServerBrowserMode}
+        onFindOpen={() => setIsFindOpen(true)}
+        onNewTab={() => socketRef.current?.emit('browser:tabs:new', { sessionId })}
+        onCloseTab={() => socketRef.current?.emit('browser:tabs:close', { sessionId, pageId: 'current' })}
+        onFocusUrl={() => { }}
+        onFullscreen={() => {
+          if (document.fullscreenElement) {
+            document.exitFullscreen();
+          } else {
+            containerRef.current?.requestFullscreen();
+          }
+        }}
+      />
+
+      {isFindOpen && isServerBrowserMode && (
+        <FindBar
+          sessionId={sessionId}
+          socket={socketRef.current}
+          isOpen={isFindOpen}
+          onClose={() => setIsFindOpen(false)}
+        />
+      )}
+
+      {contextMenu && (
+        <ContextMenu
+          sessionId={sessionId}
+          socket={socketRef.current}
+          position={contextMenu}
+          onClose={() => setContextMenu(null)}
+          onInspect={() => {
+            if (socketRef.current) {
+              socketRef.current.emit("mode:switch", { sessionId, mode: "debug" });
+            }
+          }}
+        />
+      )}
+
+      {/* DevTools Panel */}
+      {isServerBrowserMode && (
+        <DevToolsPanel
+          sessionId={sessionId}
+          socket={socketRef.current}
+          isOpen={isDevToolsOpen}
+          onClose={() => setIsDevToolsOpen(false)}
+        />
+      )}
     </div>
   );
 }
