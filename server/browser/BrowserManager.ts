@@ -47,8 +47,6 @@ export class BrowserManager extends EventEmitter {
     constructor(config: Partial<BrowserConfig> = {}) {
         super();
         this.config = { ...defaultConfig, ...config };
-
-        // Ensure storage directory exists
         this.ensureStorageDir();
     }
 
@@ -59,9 +57,6 @@ export class BrowserManager extends EventEmitter {
         }
     }
 
-    /**
-     * Initialize the browser instance
-     */
     async initialize(): Promise<void> {
         if (this.isInitialized) return;
 
@@ -83,15 +78,11 @@ export class BrowserManager extends EventEmitter {
         console.log('[BrowserManager] Browser initialized successfully');
     }
 
-    /**
-     * Create a new browser session for a user
-     */
     async createSession(sessionId: string): Promise<BrowserSession> {
         if (!this.browser) {
             await this.initialize();
         }
 
-        // Check if session already exists
         if (this.sessions.has(sessionId)) {
             console.log(`[BrowserManager] Session ${sessionId} already exists, returning existing`);
             const session = this.sessions.get(sessionId)!;
@@ -100,7 +91,6 @@ export class BrowserManager extends EventEmitter {
             return session;
         }
 
-        // Check max sessions limit
         if (this.sessions.size >= this.config.maxSessions) {
             throw new Error(`Maximum sessions limit (${this.config.maxSessions}) reached`);
         }
@@ -112,7 +102,6 @@ export class BrowserManager extends EventEmitter {
             `${sessionId}.json`
         );
 
-        // Check for existing storage state (persistent login)
         let storageState = undefined;
         if (fs.existsSync(storageStatePath)) {
             try {
@@ -123,7 +112,6 @@ export class BrowserManager extends EventEmitter {
             }
         }
 
-        // Create isolated browser context
         const context = await this.browser!.newContext({
             viewport: this.config.viewport,
             userAgent: this.config.userAgent,
@@ -131,14 +119,8 @@ export class BrowserManager extends EventEmitter {
             bypassCSP: true,
             ignoreHTTPSErrors: true
         });
-
-        // Create new page
         const page = await context.newPage();
-
-        // Create CDP session for advanced features
         const cdpSession = await context.newCDPSession(page);
-
-        // Inject cursor hiding CSS
         await this.injectCursorHider(page);
 
         const session: BrowserSession = {
@@ -156,16 +138,12 @@ export class BrowserManager extends EventEmitter {
 
         this.sessions.set(sessionId, session);
 
-        // Setup page event listeners
         this.setupPageListeners(session);
 
         console.log(`[BrowserManager] Session ${sessionId} created successfully`);
         return session;
     }
 
-    /**
-     * Navigate to a URL in a session
-     */
     async navigate(sessionId: string, url: string): Promise<Page> {
         const session = this.sessions.get(sessionId);
         if (!session) {
@@ -181,18 +159,13 @@ export class BrowserManager extends EventEmitter {
             timeout: 30000
         });
 
-        // Re-inject cursor hider after navigation
         await this.injectCursorHider(session.page);
 
-        // Save storage state after navigation
         await this.saveStorageState(session);
 
         return session.page;
     }
 
-    /**
-     * Execute input event in the headless browser
-     */
     async executeInput(sessionId: string, event: CursorEvent): Promise<void> {
         const session = this.sessions.get(sessionId);
         if (!session) return;
@@ -203,7 +176,6 @@ export class BrowserManager extends EventEmitter {
         const viewport = page.viewportSize();
         if (!viewport) return;
 
-        // Calculate actual coordinates from normalized values if provided
         let x = event.x;
         let y = event.y;
 
@@ -233,9 +205,6 @@ export class BrowserManager extends EventEmitter {
         }
     }
 
-    /**
-     * Execute keyboard input
-     */
     async executeKeyboard(sessionId: string, key: string, type: 'press' | 'down' | 'up' = 'press'): Promise<void> {
         const session = this.sessions.get(sessionId);
         if (!session) return;
@@ -259,9 +228,6 @@ export class BrowserManager extends EventEmitter {
         }
     }
 
-    /**
-     * Type text into focused element
-     */
     async typeText(sessionId: string, text: string): Promise<void> {
         const session = this.sessions.get(sessionId);
         if (!session) return;
@@ -270,9 +236,6 @@ export class BrowserManager extends EventEmitter {
         await session.page.keyboard.type(text);
     }
 
-    /**
-     * Apply style to an element
-     */
     async applyStyle(sessionId: string, elementId: string, property: string, value: string): Promise<void> {
         const session = this.sessions.get(sessionId);
         if (!session) return;
@@ -283,16 +246,12 @@ export class BrowserManager extends EventEmitter {
             const el = document.querySelector(`[data-devoptic-id="${id}"]`) as HTMLElement;
             if (el) {
                 (el.style as any)[prop] = val;
-                // Flash to show change
                 el.style.outline = '2px dashed #4ade80';
                 setTimeout(() => { el.style.outline = ''; }, 500);
             }
         }, { id: elementId, prop: property, val: value });
     }
 
-    /**
-     * Schedule cleanup for a session (called when socket disconnects)
-     */
     scheduleCleanup(sessionId: string, timeoutMs?: number): void {
         const session = this.sessions.get(sessionId);
         if (!session) return;
@@ -301,7 +260,6 @@ export class BrowserManager extends EventEmitter {
 
         console.log(`[BrowserManager] Scheduling cleanup for ${sessionId} in ${timeout}ms`);
 
-        // Clear any existing timer
         this.cancelCleanup(sessionId);
 
         session.cleanupTimer = setTimeout(async () => {
@@ -310,9 +268,6 @@ export class BrowserManager extends EventEmitter {
         }, timeout);
     }
 
-    /**
-     * Cancel scheduled cleanup (called when socket reconnects)
-     */
     cancelCleanup(sessionId: string): void {
         const session = this.sessions.get(sessionId);
         if (session?.cleanupTimer) {
@@ -322,38 +277,28 @@ export class BrowserManager extends EventEmitter {
         }
     }
 
-    /**
-     * Destroy a browser session
-     */
     async destroySession(sessionId: string): Promise<void> {
         const session = this.sessions.get(sessionId);
         if (!session) return;
 
         console.log(`[BrowserManager] Destroying session: ${sessionId}`);
-
-        // Save storage state before destruction
         await this.saveStorageState(session);
-
-        // Clear cleanup timer
         if (session.cleanupTimer) {
             clearTimeout(session.cleanupTimer);
         }
 
-        // Close CDP session
         if (session.cdpSession) {
             try {
                 await session.cdpSession.detach();
             } catch (err) {
-                // Ignore errors during cleanup
             }
         }
 
-        // Close page and context
         try {
             await session.page.close();
             await session.context.close();
         } catch (err) {
-            // Ignore errors during cleanup
+            
         }
 
         this.sessions.delete(sessionId);
@@ -362,23 +307,14 @@ export class BrowserManager extends EventEmitter {
         console.log(`[BrowserManager] Session ${sessionId} destroyed`);
     }
 
-    /**
-     * Get a session by ID
-     */
     getSession(sessionId: string): BrowserSession | undefined {
         return this.sessions.get(sessionId);
     }
 
-    /**
-     * Get all active sessions
-     */
     getActiveSessions(): string[] {
         return Array.from(this.sessions.keys());
     }
 
-    /**
-     * Set quality for a session (dynamic resolution scaling)
-     */
     setSessionQuality(sessionId: string, quality: 'low' | 'medium' | 'high'): void {
         const session = this.sessions.get(sessionId);
         if (!session) return;
@@ -386,7 +322,6 @@ export class BrowserManager extends EventEmitter {
         session.quality = quality;
         const preset = QUALITY_PRESETS[quality];
 
-        // Resize viewport based on quality
         session.page.setViewportSize({
             width: preset.width,
             height: preset.height
@@ -395,9 +330,6 @@ export class BrowserManager extends EventEmitter {
         console.log(`[BrowserManager] Session ${sessionId} quality set to ${quality}`);
     }
 
-    /**
-     * Set privacy mode for a session
-     */
     setPrivacyMode(sessionId: string, isPrivate: boolean): void {
         const session = this.sessions.get(sessionId);
         if (!session) return;
@@ -408,18 +340,13 @@ export class BrowserManager extends EventEmitter {
         console.log(`[BrowserManager] Session ${sessionId} privacy mode: ${isPrivate}`);
     }
 
-    /**
-     * Shutdown the browser manager
-     */
     async shutdown(): Promise<void> {
         console.log('[BrowserManager] Shutting down...');
 
-        // Destroy all sessions
         for (const sessionId of this.sessions.keys()) {
             await this.destroySession(sessionId);
         }
 
-        // Close browser
         if (this.browser) {
             await this.browser.close();
             this.browser = null;
@@ -429,11 +356,6 @@ export class BrowserManager extends EventEmitter {
         console.log('[BrowserManager] Shutdown complete');
     }
 
-    // ============ Private Methods ============
-
-    /**
-     * Inject CSS to hide the remote browser's cursor
-     */
     private async injectCursorHider(page: Page): Promise<void> {
         const HIDE_CURSOR_CSS = `
       * { cursor: none !important; }
@@ -442,19 +364,14 @@ export class BrowserManager extends EventEmitter {
 
         await page.addStyleTag({ content: HIDE_CURSOR_CSS });
 
-        // Re-inject on navigation
         page.on('domcontentloaded', async () => {
             try {
                 await page.addStyleTag({ content: HIDE_CURSOR_CSS });
             } catch (err) {
-                // Page might have navigated away
             }
         });
     }
 
-    /**
-     * Save storage state to disk
-     */
     private async saveStorageState(session: BrowserSession): Promise<void> {
         try {
             const state = await session.context.storageState();
@@ -464,26 +381,17 @@ export class BrowserManager extends EventEmitter {
         }
     }
 
-    /**
-     * Setup event listeners for a page
-     */
     private setupPageListeners(session: BrowserSession): void {
         const { page, sessionId } = session;
 
-        // Monitor for sensitive input focus (privacy mode)
         page.on('framenavigated', () => {
             this.setupPrivacyMonitor(session);
         });
-
-        // Initial privacy monitor setup
         this.setupPrivacyMonitor(session);
-
-        // Page errors
         page.on('pageerror', (err) => {
             this.emit('page:error', { sessionId, error: err.message });
         });
 
-        // Console messages
         page.on('console', (msg) => {
             if (!session.isPrivacyMode) {
                 this.emit('page:console', {
@@ -495,16 +403,12 @@ export class BrowserManager extends EventEmitter {
         });
     }
 
-    /**
-     * Setup privacy detection in the page
-     */
     private async setupPrivacyMonitor(session: BrowserSession): Promise<void> {
         try {
             await session.page.exposeFunction('__devopticPrivacyCallback', (isPrivate: boolean) => {
                 this.setPrivacyMode(session.sessionId, isPrivate);
             });
         } catch (err) {
-            // Function might already be exposed
         }
 
         await session.page.evaluate(() => {
@@ -539,5 +443,4 @@ export class BrowserManager extends EventEmitter {
     }
 }
 
-// Export singleton instance
 export const browserManager = new BrowserManager();
