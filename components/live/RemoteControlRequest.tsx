@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import type { Socket } from "socket.io-client";
 import { MousePointer2, Check, X, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -24,6 +25,11 @@ export const RemoteControlRequest = ({
     const [hasControl, setHasControl] = useState(false);
     const [controlGranted, setControlGranted] = useState(false);
     const [requestPending, setRequestPending] = useState(false);
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // Host: Request control
     const requestControl = useCallback(() => {
@@ -166,55 +172,57 @@ export const RemoteControlRequest = ({
                     </button>
                 )}
 
-                {/* Authorization Popup */}
-                <AnimatePresence>
-                    {showRequest && (
-                        <motion.div
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.9 }}
-                            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-                        >
+                {mounted && createPortal(
+                    <AnimatePresence>
+                        {showRequest && (
                             <motion.div
-                                initial={{ y: 20 }}
-                                animate={{ y: 0 }}
-                                className="bg-slate-900 border border-white/10 rounded-2xl p-6 max-w-md shadow-2xl"
+                                initial={{ opacity: 0, scale: 0.9 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.9 }}
+                                className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-sm"
                             >
-                                <div className="flex items-center gap-3 mb-4">
-                                    <div className="p-3 rounded-full bg-amber-500/20">
-                                        <AlertTriangle size={24} className="text-amber-500" />
+                                <motion.div
+                                    initial={{ y: 20 }}
+                                    animate={{ y: 0 }}
+                                    className="bg-slate-900 border border-white/10 rounded-2xl p-6 max-w-md shadow-2xl"
+                                >
+                                    <div className="flex items-center gap-3 mb-4">
+                                        <div className="p-3 rounded-full bg-amber-500/20">
+                                            <AlertTriangle size={24} className="text-amber-500" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-bold text-white">Control Request</h3>
+                                            <p className="text-sm text-slate-400">The host wants to control your screen</p>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h3 className="text-lg font-bold text-white">Control Request</h3>
-                                        <p className="text-sm text-slate-400">The host wants to control your screen</p>
+
+                                    <p className="text-sm text-slate-400 mb-6">
+                                        If you allow this, the host will be able to move your cursor and click on elements.
+                                        You can revoke access at any time.
+                                    </p>
+
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={denyControl}
+                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 border border-white/10 rounded-xl text-slate-300 font-bold hover:bg-slate-700 transition-colors"
+                                        >
+                                            <X size={16} />
+                                            Deny
+                                        </button>
+                                        <button
+                                            onClick={grantControl}
+                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 rounded-xl text-white font-bold hover:bg-emerald-500 transition-colors"
+                                        >
+                                            <Check size={16} />
+                                            Allow
+                                        </button>
                                     </div>
-                                </div>
-
-                                <p className="text-sm text-slate-400 mb-6">
-                                    If you allow this, the host will be able to move your cursor and click on elements.
-                                    You can revoke access at any time.
-                                </p>
-
-                                <div className="flex gap-3">
-                                    <button
-                                        onClick={denyControl}
-                                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 border border-white/10 rounded-xl text-slate-300 font-bold hover:bg-slate-700 transition-colors"
-                                    >
-                                        <X size={16} />
-                                        Deny
-                                    </button>
-                                    <button
-                                        onClick={grantControl}
-                                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 rounded-xl text-white font-bold hover:bg-emerald-500 transition-colors"
-                                    >
-                                        <Check size={16} />
-                                        Allow
-                                    </button>
-                                </div>
+                                </motion.div>
                             </motion.div>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
+                        )}
+                    </AnimatePresence>,
+                    document.body
+                )}
             </>
         );
     }
