@@ -68,12 +68,9 @@ export const ScreenShareHost = ({
         }
     }, []);
 
-    // ... (keep useEffects same)
 
     useEffect(() => {
         if (!isServerBrowserMode || !socket) return;
-
-        // ... keys ...
 
         // Handle cursor sync
         const handleCursor = (data: { cursor: string }) => {
@@ -82,11 +79,8 @@ export const ScreenShareHost = ({
 
         socket.on('browser:cursor', handleCursor);
 
-        // ... existing listeners ...
-
         return () => {
             socket.off('browser:cursor', handleCursor);
-            // ... existing cleanups ...
         };
     }, [isServerBrowserMode, socket, sessionId]);
 
@@ -147,7 +141,7 @@ export const ScreenShareHost = ({
         });
     }, [socket, sessionId, hasControl, isServerBrowserMode]);
 
-    // --- HIGH SPEED ACCUMULATOR LOOP (60 FPS) ---
+    // HIGH SPEED ACCUMULATOR LOOP (60 FPS)
     useEffect(() => {
         // Run scroll loop when hasControl OR in server browser mode
         const canInteract = isServerBrowserMode || hasControl;
@@ -268,7 +262,6 @@ export const ScreenShareHost = ({
         if (!isServerBrowserMode || !socket) return;
 
         const handleKeyDown = async (e: KeyboardEvent) => {
-            // Don't capture if user is typing in an input field
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
                 return;
             }
@@ -289,13 +282,11 @@ export const ScreenShareHost = ({
                     return;
                 }
                 if (e.key === 'c' || e.key === 'C') {
-                    // Copy: Get selected text from remote browser
                     e.preventDefault();
                     socket.emit("browser:copy", { sessionId });
                     return;
                 }
                 if (e.key === 'v' || e.key === 'V') {
-                    // Paste: Get local clipboard and send to remote
                     e.preventDefault();
                     try {
                         const text = await navigator.clipboard.readText();
@@ -679,7 +670,7 @@ export const ScreenShareHost = ({
                 autoPlay
                 playsInline
                 muted
-                className={`w-full h-full object-contain ${(hasControl || isServerBrowserMode) ? (activeTool === 'magic' ? 'cursor-crosshair' : 'cursor-text') : ''} ${privacyMode ? 'opacity-0' : 'opacity-100'}`}
+                className={`w-full h-full object-contain ${(hasControl || isServerBrowserMode) ? (activeTool === 'magic' ? 'cursor-crosshair' : 'cursor-none') : ''} ${privacyMode ? 'opacity-0' : 'opacity-100'}`}
                 style={{
                     opacity: status === "streaming" ? 1 : 0,
                     cursor: isServerBrowserMode ? cursorStyle : undefined
