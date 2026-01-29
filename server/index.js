@@ -166,21 +166,27 @@ async function configurePage(page, sessionId) {
   if (!page.id) page.id = Math.random().toString(36).substring(2, 10);
 
   const HIDE_CURSOR_CSS = '* { cursor: none !important; }';
-  await page.addStyleTag({ content: HIDE_CURSOR_CSS });
+  try {
+    await page.addStyleTag({ content: HIDE_CURSOR_CSS });
+  } catch (e) {
+    // Ignore execution context errors, page might have navigated
+  }
 
-  await page.addInitScript(() => {
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/lenis@1.0.42/dist/lenis.min.js';
-    script.onload = () => {
-      // @ts-ignore
-      if (typeof Lenis !== 'undefined') {
-        const lenis = new Lenis({ duration: 1.5, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), smoothWheel: true });
-        function raf(time) { lenis.raf(time); requestAnimationFrame(raf); }
-        requestAnimationFrame(raf);
-      }
-    };
-    document.head.appendChild(script);
-  });
+  try {
+    await page.addInitScript(() => {
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/lenis@1.0.42/dist/lenis.min.js';
+      script.onload = () => {
+        // @ts-ignore
+        if (typeof Lenis !== 'undefined') {
+          const lenis = new Lenis({ duration: 1.5, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), smoothWheel: true });
+          function raf(time) { lenis.raf(time); requestAnimationFrame(raf); }
+          requestAnimationFrame(raf);
+        }
+      };
+      document.head.appendChild(script);
+    });
+  } catch (e) { }
 
   await setupPrivacyMonitor(sessionId, page);
 
@@ -440,7 +446,7 @@ async function createBrowserSession(sessionId, socket) {
   const context = playwrightBrowser;
   const page = await context.newPage();
   await configurePage(page, sessionId);
-  attachSessionHandlers(sessionId, socket, context) 
+  attachSessionHandlers(sessionId, socket, context)
 
   const session = {
     sessionId,
@@ -510,6 +516,10 @@ async function createBrowserSession(sessionId, socket) {
       sess.handlingNewPage = false;
     });
   }
+
+
+
+
 
   await page.exposeFunction('onCursorChange', (cursor) => {
     io.to(sessionId).emit('browser:cursor', { sessionId, cursor });
@@ -1217,9 +1227,11 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id} (User: ${socket.user?.sub})`);
+  let currentSessionId = null;
 
   socket.on('join-session', (sessionId) => {
     if (!sessionId || typeof sessionId !== 'string') return;
+    currentSessionId = sessionId;
     socket.join(sessionId);
     console.log(`User ${socket.id} joined room: ${sessionId}`);
 
@@ -1236,6 +1248,37 @@ io.on('connection', (socket) => {
     const session = browserSessions.get(sessionId);
     if (session && session.isActive) {
       socket.emit('browser:active', { active: true });
+    }
+  });
+
+  // --- Agent Management ---
+  socket.on('agent:status', (data) => {
+    const sid = data.sessionId;
+    if (!sid) return;
+
+    // Agent Join & Setup
+    if (data.status === 'online') {
+      currentSessionId = sid;
+      socket.join(sid);
+
+      const session = browserSessions.get(sid);
+      if (session) {
+        session.agentStatus = 'online';
+        session.agentSocketId = socket.id;
+      }
+    }
+
+    io.to(sid).emit('agent:status', data);
+  });
+
+  socket.on('agent:check', () => {
+    if (currentSessionId) {
+      const session = browserSessions.get(currentSessionId);
+      if (session && session.agentStatus === 'online') {
+        socket.emit('agent:status', { status: 'online' });
+      } else {
+        socket.emit('agent:status', { status: 'offline' });
+      }
     }
   });
 
@@ -1433,6 +1476,35 @@ io.on('connection', (socket) => {
   socket.on('pixel:mode', relay('pixel:mode'));
   socket.on('privacy:sync', (data) => socket.to(data.sessionId).emit('privacy:sync', data));
   socket.on('rrweb:batch', relay('rrweb:batch'));
+
+  // --- TUNNEL COORDINATION (Global) ---
+  socket.on('tunnel:start', (data) => {
+    const sid = data.sessionId || currentSessionId;
+    if (sid) {
+      console.log(`[Tunnel] Start request for session ${sid} from ${socket.id}`);
+      io.to(sid).emit('tunnel:start');
+    }
+  });
+
+  socket.on('tunnel:ready', async (data) => {
+    if (data.sessionId && data.url) {
+      console.log(`[Tunnel] Ready for ${data.sessionId}: ${data.url}`);
+      io.to(data.sessionId).emit('tunnel:ready', { url: data.url });
+
+      // Auto-navigate Server Browser if it exists and is active
+      if (browserSessions.has(data.sessionId)) {
+        await navigateSession(data.sessionId, data.url);
+      }
+    }
+  });
+
+  socket.on('tunnel:stop', (data) => {
+    const sid = data.sessionId || currentSessionId;
+    if (sid) {
+      console.log(`[Tunnel] Stop request for session ${sid}`);
+      io.to(sid).emit('tunnel:stop');
+    }
+  });
 
   // --- MODE SYNC (Guest -> Host) ---
   socket.on('mode:switch', (data) => {
@@ -2079,6 +2151,17 @@ io.on('connection', (socket) => {
 
 
   socket.on('disconnect', () => {
+    // Check for Agent Disconnect
+    if (currentSessionId) {
+      const session = browserSessions.get(currentSessionId);
+      if (session && session.agentSocketId === socket.id) {
+        console.log(`[Agent] Disconnected from session ${currentSessionId}`);
+        session.agentStatus = 'offline';
+        session.agentSocketId = null;
+        io.to(currentSessionId).emit('agent:status', { status: 'offline' });
+      }
+    }
+
     for (const [sessionId, state] of Object.entries(sessionState)) {
       if (state.guestSocketId === socket.id) {
         state.guestSocketId = null;

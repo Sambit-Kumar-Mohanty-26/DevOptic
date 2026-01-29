@@ -1,6 +1,7 @@
 const { io } = require("socket.io-client");
 const fs = require("fs").promises;
 const path = require("path");
+const { startTunnel } = require("untun");
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
@@ -30,11 +31,13 @@ const socket = io(SOCKET_URL, {
     reconnectionDelay: 1000,
 });
 
+let activeTunnel = null;
 
 socket.on("connect", () => {
     console.log(`Connected! Socket ID: ${socket.id}`);
     console.log(`Joining session: ${SESSION_ID}`);
     socket.emit("join-session", SESSION_ID);
+    socket.emit("agent:status", { sessionId: SESSION_ID, status: "online" });
     console.log("File System Agent Ready. Waiting for commands...");
 });
 
@@ -44,7 +47,46 @@ socket.on("connect_error", (err) => {
 
 socket.on("disconnect", (reason) => {
     console.log(`Disconnected: ${reason}`);
+    if (activeTunnel) {
+        console.log("Closing active tunnel...");
+        activeTunnel.close().catch(console.error);
+        activeTunnel = null;
+    }
 });
+
+socket.on("tunnel:start", async (data) => {
+    console.log("[TUNNEL] Starting Cloudflare Tunnel...");
+    if (activeTunnel) {
+        console.log("[TUNNEL] Tunnel already active:", await activeTunnel.getURL());
+        socket.emit("tunnel:ready", { sessionId: SESSION_ID, url: await activeTunnel.getURL() });
+        return;
+    }
+
+    try {
+        const tunnel = await startTunnel({ port: 3000 }); // Default Next.js port
+        activeTunnel = tunnel;
+        const url = await tunnel.getURL();
+        console.log(`[TUNNEL] Tunnel Active: ${url}`);
+        socket.emit("tunnel:ready", { sessionId: SESSION_ID, url });
+    } catch (err) {
+        console.error("[TUNNEL] START ERROR:", err);
+        socket.emit("console:error", {
+            sessionId: SESSION_ID,
+            args: [`Tunnel Error: ${err.message}`],
+            timestamp: Date.now()
+        });
+    }
+});
+
+socket.on("tunnel:stop", async () => {
+    if (activeTunnel) {
+        console.log("[TUNNEL] Stopping tunnel...");
+        await activeTunnel.close();
+        activeTunnel = null;
+        console.log("[TUNNEL] Stopped.");
+    }
+});
+
 
 socket.on("fs:list", async () => {
     console.log("[READ] Listing files...");
@@ -64,10 +106,10 @@ socket.on("fs:read", async (data) => {
         socket.emit("fs:read:response", { sessionId: SESSION_ID, path: data.path, content });
     } catch (err) {
         console.error("Read Error:", err.message);
-        socket.emit("console:error", { 
-            sessionId: SESSION_ID, 
-            args: [`File Read Error: ${err.message}`], 
-            timestamp: Date.now() 
+        socket.emit("console:error", {
+            sessionId: SESSION_ID,
+            args: [`File Read Error: ${err.message}`],
+            timestamp: Date.now()
         });
     }
 });
@@ -81,10 +123,10 @@ socket.on("fs:write", async (data) => {
         socket.emit("fs:write:success", { sessionId: SESSION_ID, path: data.path });
     } catch (err) {
         console.error("Write Error:", err.message);
-        socket.emit("console:error", { 
-            sessionId: SESSION_ID, 
-            args: [`File Save Error: ${err.message}`], 
-            timestamp: Date.now() 
+        socket.emit("console:error", {
+            sessionId: SESSION_ID,
+            args: [`File Save Error: ${err.message}`],
+            timestamp: Date.now()
         });
     }
 });
@@ -116,7 +158,7 @@ async function getFiles(dir) {
 function validatePath(requestedPath) {
     const cleanReq = requestedPath.replace(/^[/\\]+/, "");
     const resolved = path.resolve(ROOT_DIR, cleanReq);
-    
+
     if (!resolved.startsWith(ROOT_DIR)) {
         throw new Error(`Access Denied: Path ${resolved} is outside project root.`);
     }

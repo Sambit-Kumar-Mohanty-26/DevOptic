@@ -31,6 +31,7 @@ import { NetworkCapture } from "@/components/live/NetworkCapture";
 import { RemoteNetwork } from "@/components/live/RemoteNetwork";
 import { RemoteControlRequest } from "@/components/live/RemoteControlRequest";
 import { CursorControl } from "@/components/live/CursorControl";
+import { AgentConnection } from "@/components/live/AgentConnection";
 import { getSessionRole } from "@/app/actions";
 import { TelemetryPanel } from "@/components/live/TelemetryPanel";
 import { InspectorPanel } from "@/components/live/InspectorPanel";
@@ -1516,11 +1517,9 @@ export default function LiveWorkspace({ params }: PageProps) {
                       onSubmit={(e) => {
                         e.preventDefault();
                         if (inputUrl.trim()) {
-                          setIsServerBrowserMode(true);
-                          let url = 'https://' + inputUrl.replace(/^https?:\/\//i, '');
-                          if (socketRef.current) {
-                            socketRef.current.emit('browser:create', { sessionId, url });
-                          }
+                          let url = inputUrl;
+                          if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+                          setTargetUrl(url);
                         }
                       }}
                       className="flex items-center bg-black/40 border border-white/10 rounded-full px-3 py-1 w-64 focus-within:w-80 transition-all hover:bg-black/60 focus-within:border-cyan-500/50"
@@ -1778,6 +1777,7 @@ export default function LiveWorkspace({ params }: PageProps) {
             />
             <NetworkCapture sessionId={sessionId} socket={socketRef.current} isActive={isRecording} />
             <CursorControl sessionId={sessionId} socket={socketRef.current} controlGranted={controlGranted} />
+            <AgentConnection sessionId={sessionId} socket={socketRef.current} />
           </>
         )}
         <CallInterface
