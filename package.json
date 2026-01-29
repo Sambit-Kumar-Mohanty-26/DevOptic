@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "server": "node server/index.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate && npx playwright install chromium"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.36.5",
