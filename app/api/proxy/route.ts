@@ -7,11 +7,46 @@ import ssrfFilter from "ssrf-req-filter";
 export const runtime = 'nodejs';
 
 // --- INJECTED SCRIPT GENERATOR ---
-const getInjectedScript = (socketUrl: string) => `
+const getInjectedScript = (socketUrl: string, targetOrigin: string) => `
   <script>
     (function() {
       window.DEVOPTIC_SOCKET_URL = "${socketUrl}";
+      window.DEVOPTIC_TARGET_ORIGIN = "${targetOrigin}";
       console.log('[DevOptic] Connecting to:', window.DEVOPTIC_SOCKET_URL);
+
+      // --- FETCH INTERCEPTOR ---
+      const originalFetch = window.fetch;
+      window.fetch = async function(input, init) {
+          let url = input;
+          if (input instanceof Request) {
+              url = input.url;
+          }
+          
+          try {
+              // Resolve URL against the target origin (handle relative paths)
+              const resolvedUrl = new URL(url, window.DEVOPTIC_TARGET_ORIGIN).href;
+              
+              // Proxy the request
+              const proxiedUrl = '/api/proxy?url=' + encodeURIComponent(resolvedUrl);
+              
+              return originalFetch(proxiedUrl, init);
+          } catch(e) {
+              return originalFetch(input, init);
+          }
+      };
+
+      // --- XHR INTERCEPTOR ---
+      const originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url, ...args) {
+          try {
+              const resolvedUrl = new URL(url, window.DEVOPTIC_TARGET_ORIGIN).href;
+              const proxiedUrl = '/api/proxy?url=' + encodeURIComponent(resolvedUrl);
+              return originalOpen.call(this, method, proxiedUrl, ...args);
+          } catch(e) {
+              return originalOpen.call(this, method, url, ...args);
+          }
+      };
+
       
       const LERP_FACTOR = 0.16;
       const PRECISION = 0.5;
@@ -539,7 +574,7 @@ export async function GET(req: NextRequest) {
 
     const csp = `default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-ancestors 'self' ${FRONTEND_ORIGIN};`;
 
-    $('head').append(getInjectedScript(SOCKET_SERVER_URL));
+    $('head').append(getInjectedScript(SOCKET_SERVER_URL, baseUrl));
 
     const html = $.html();
 

@@ -1,3 +1,15 @@
-2026/01/30-05:05:23.364 4524 Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/MANIFEST-000001
-2026/01/30-05:05:23.377 4524 Recovering log #73
-2026/01/30-05:05:23.377 4524 Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/000073.log 
+2026/01/30-05:21:08.977 556c Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/MANIFEST-000001
+2026/01/30-05:21:08.978 556c Recovering log #73
+2026/01/30-05:21:08.978 556c Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Session Storage/000073.log 
+2026/01/30-05:24:42.983 5e2c Level-0 table #77: started
+2026/01/30-05:24:43.002 5e2c Level-0 table #77: 510769 bytes OK
+2026/01/30-05:24:43.010 5e2c Delete type=0 #73
+2026/01/30-05:24:43.011 5e2c Compacting 4@0 + 1@1 files
+2026/01/30-05:24:43.047 5e2c Generated table #78@0: 16 keys, 506523 bytes
+2026/01/30-05:24:43.047 5e2c Compacted 4@0 + 1@1 files => 506523 bytes
+2026/01/30-05:24:43.048 5e2c compacted to: files[ 0 1 0 0 0 0 0 ]
+2026/01/30-05:24:43.049 5e2c Delete type=2 #68
+2026/01/30-05:24:43.049 5e2c Delete type=2 #70
+2026/01/30-05:24:43.049 5e2c Delete type=2 #72
+2026/01/30-05:24:43.049 5e2c Delete type=2 #74
+2026/01/30-05:24:43.049 5e2c Delete type=2 #77

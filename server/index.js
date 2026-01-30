@@ -1007,10 +1007,15 @@ function startStreaming(sessionId) {
     }
 
     try {
-      const screenshot = await sess.page.screenshot({
-        type: 'jpeg',
-        quality: preset.jpegQuality
-      });
+
+
+      const screenshot = await Promise.race([
+        sess.page.screenshot({
+          type: 'jpeg',
+          quality: preset.jpegQuality
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Screenshot timeout')), 500))
+      ]);
 
       io.to(sessionId).emit('browser:frame:data', {
         sessionId,
@@ -1443,8 +1448,8 @@ io.on('connection', (socket) => {
     const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
     const hasBrowserSession = browserSessions.has(data.sessionId);
 
-    // Allow input if: 1) user has control grant, OR 2) a server browser session exists
-    if (socket.id === authorizedController || hasBrowserSession) {
+    // Allow input ONLY if user has explicit control grant
+    if (socket.id === authorizedController) {
       if (hasBrowserSession) {
         await executeInput(data.sessionId, data);
       }

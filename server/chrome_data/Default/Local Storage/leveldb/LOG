@@ -1,3 +1,6 @@
-2026/01/30-05:05:14.335 49ac Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/MANIFEST-000001
-2026/01/30-05:05:14.365 49ac Recovering log #45
-2026/01/30-05:05:14.366 49ac Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/000045.log 
+2026/01/30-05:20:57.674 5e2c Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/MANIFEST-000001
+2026/01/30-05:20:57.674 5e2c Recovering log #45
+2026/01/30-05:20:57.675 5e2c Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\Local Storage\leveldb/000045.log 
+2026/01/30-05:21:57.701 556c Level-0 table #49: started
+2026/01/30-05:21:57.708 556c Level-0 table #49: 41818 bytes OK
+2026/01/30-05:21:57.711 556c Delete type=0 #45
