@@ -14,6 +14,116 @@ chromium.use(stealthPlugin());
 import { HistoryManager } from './browser/HistoryManager.js';
 import { BookmarkManager } from './browser/BookmarkManager.js';
 
+// --- Find in Page Helper Script ---
+// Matches text nodes and highlights them
+// This needs to be injected into the page context
+const FIND_HELPER_SCRIPT = `
+  window.__devopticFindMatches = [];
+  window.__devopticFindCurrent = -1;
+
+  window.__devopticFind = (query, caseSensitive = false) => {
+    // Clear previous
+    if (window.__devopticFindMatches.length > 0) {
+      window.__devopticFindClear();
+    }
+
+    if (!query) return { matches: 0, current: 0 };
+
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    const matches = [];
+
+    while (node = walker.nextNode()) {
+      if (!node.parentElement) continue;
+      // Skip hidden/script/style
+      if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT'].includes(node.parentElement.tagName)) continue;
+      if (node.parentElement.offsetParent === null) continue; // Hidden
+
+      const text = node.textContent;
+      const q = caseSensitive ? query : query.toLowerCase();
+      const t = caseSensitive ? text : text.toLowerCase();
+      
+      let index = t.indexOf(q);
+      while (index !== -1) {
+        matches.push({ node, index, length: query.length });
+        index = t.indexOf(q, index + 1);
+      }
+    }
+
+    window.__devopticFindMatches = matches;
+    window.__devopticFindCurrent = matches.length > 0 ? 0 : -1;
+    
+    // Highlight all
+    window.__devopticFindHighlight();
+    
+    return { matches: matches.length, current: matches.length > 0 ? 1 : 0 };
+  };
+
+  window.__devopticFindHighlight = () => {
+    // Remove existing highlights first (simple approach: remove custom spans)
+    // Complexity: Managing spans in DOM is risky for hydration, but for streaming it's fine.
+    // Enhanced approach: use CSS Highlighting API if available, else standard wrapping
+    
+    // For MVP server browser, we will just use a simple scrolling + outline approach on parent elements
+    // to avoid breaking the DOM structure too much.
+    // Or better: Use Selection API to select the current match
+  };
+
+  window.__devopticFindNext = () => {
+    if (window.__devopticFindMatches.length === 0) return { matches: 0, current: 0 };
+    window.__devopticFindCurrent = (window.__devopticFindCurrent + 1) % window.__devopticFindMatches.length;
+    window.__devopticFindScrollToCurrent();
+    return { matches: window.__devopticFindMatches.length, current: window.__devopticFindCurrent + 1 };
+  };
+
+  window.__devopticFindPrev = () => {
+    if (window.__devopticFindMatches.length === 0) return { matches: 0, current: 0 };
+    window.__devopticFindCurrent = (window.__devopticFindCurrent - 1 + window.__devopticFindMatches.length) % window.__devopticFindMatches.length;
+    window.__devopticFindScrollToCurrent();
+    return { matches: window.__devopticFindMatches.length, current: window.__devopticFindCurrent + 1 };
+  };
+
+  window.__devopticFindScrollToCurrent = () => {
+    const match = window.__devopticFindMatches[window.__devopticFindCurrent];
+    if (match && match.node.parentElement) {
+       match.node.parentElement.scrollIntoView({ behavior: 'auto', block: 'center' });
+       // Visual indicator
+       const el = match.node.parentElement;
+       const oldOutline = el.style.outline;
+       const oldBg = el.style.backgroundColor;
+       
+       el.style.outline = '3px solid #facc15'; // yellow-400
+       el.style.backgroundColor = 'rgba(250, 204, 21, 0.3)';
+       
+       // Reset after short delay or keep until next?
+       // Let's keep a reference to clear it later
+       if (window.__devopticLastHighlight && window.__devopticLastHighlight !== el) {
+          try {
+            window.__devopticLastHighlight.style.outline = window.__devopticLastHighlight._oldOutline || '';
+            window.__devopticLastHighlight.style.backgroundColor = window.__devopticLastHighlight._oldBg || '';
+          } catch(e) {}
+       }
+       
+       el._oldOutline = oldOutline;
+       el._oldBg = oldBg;
+       window.__devopticLastHighlight = el;
+    }
+  };
+  
+  window.__devopticFindClear = () => {
+     if (window.__devopticLastHighlight) {
+        try {
+          window.__devopticLastHighlight.style.outline = window.__devopticLastHighlight._oldOutline || '';
+          window.__devopticLastHighlight.style.backgroundColor = window.__devopticLastHighlight._oldBg || '';
+        } catch(e) {}
+        window.__devopticLastHighlight = null;
+     }
+     window.__devopticFindMatches = [];
+     window.__devopticFindCurrent = -1;
+  };
+`;
+
+
 dotenv.config();
 
 const app = express();
@@ -229,6 +339,18 @@ async function configurePage(page, sessionId) {
       io.to(sessionId).emit('browser:title', { sessionId, title });
       io.to(sessionId).emit('browser:loaded', { sessionId, url, title });
       io.to(sessionId).emit('browser:loading', { sessionId, isLoading: false });
+
+      // -- DEVOPTIC CHANGE: Log History --
+      const entry = HistoryManager.addEntry(sessionId, url, title);
+      try {
+        const favicon = await page.evaluate(() => {
+          const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
+          return link.href || '/favicon.ico';
+        });
+        if (favicon) HistoryManager.addEntry(sessionId, url, title, favicon);
+      } catch (e) { }
+      // ---------------------------------
+
       if (session) emitTabsList(sessionId, session.context);
     } catch (e) { }
   });
@@ -317,6 +439,13 @@ async function emitTabsList(sessionId, context) {
   io.to(sessionId).emit('browser:tabs:list', { tabs });
 }
 
+// Helper to inject scripts safely
+async function safeInjectScript(page, content) {
+  try {
+    await page.addInitScript({ content });
+  } catch (e) { }
+}
+
 // Helper to safely update session page and ID (Standalone)
 async function updateSessionPage(sessionId, context, page) {
   const session = browserSessions.get(sessionId);
@@ -340,6 +469,11 @@ function attachSessionHandlers(sessionId, socket, context) {
   // Tab Management Handlers
   socket.on('browser:tabs:new', async () => {
     const newPage = await context.newPage();
+    try {
+      // Default to Bing
+      await newPage.goto("https://www.bing.com", { timeout: 10000 }).catch(() => { });
+    } catch (e) { }
+
     await configurePage(newPage, sessionId);
     await updateSessionPage(sessionId, context, newPage);
   });
@@ -423,6 +557,83 @@ function attachSessionHandlers(sessionId, socket, context) {
     }
   });
 
+  // --- HISTORY & BOOKMARKS HANDLERS ---
+
+  // Search History
+  socket.on('browser:history:search', (data) => {
+    if (data.sessionId !== sessionId) return;
+    const results = HistoryManager.searchHistory(sessionId, data.query || '');
+    socket.emit('browser:history:data', { history: results });
+  });
+
+  // Add Bookmark
+  socket.on('browser:bookmark:add', async (data) => {
+    if (data.sessionId !== sessionId) return;
+    const session = browserSessions.get(sessionId);
+    if (session && session.page) {
+      try {
+        const title = await session.page.title();
+        const url = session.page.url();
+        BookmarkManager.addBookmark(sessionId, { title, url });
+      } catch (e) { }
+    }
+  });
+
+  // --- FIND IN PAGE HANDLERS ---
+
+  socket.on('browser:find', async (data) => {
+    if (data.sessionId !== sessionId) return;
+    const session = browserSessions.get(sessionId);
+    if (!session || !session.page) return;
+
+    try {
+      await session.page.evaluate(() => { if (window.__devopticFind) window.__devopticFind(null); });
+      const result = await session.page.evaluate((q) => {
+        return window.__devopticFind ? window.__devopticFind(q) : { matches: 0, current: 0 };
+      }, data.query);
+      socket.emit('browser:find:result', result);
+      session.ghostDOMDirty = true;
+    } catch (err) { }
+  });
+
+  socket.on('browser:find:next', async (data) => {
+    if (data.sessionId !== sessionId) return;
+    const session = browserSessions.get(sessionId);
+    if (!session || !session.page) return;
+    try {
+      const result = await session.page.evaluate(() => {
+        return window.__devopticFindNext ? window.__devopticFindNext() : { matches: 0, current: 0 };
+      });
+      socket.emit('browser:find:result', result);
+      session.ghostDOMDirty = true;
+    } catch (err) { }
+  });
+
+  socket.on('browser:find:prev', async (data) => {
+    if (data.sessionId !== sessionId) return;
+    const session = browserSessions.get(sessionId);
+    if (!session || !session.page) return;
+    try {
+      const result = await session.page.evaluate(() => {
+        return window.__devopticFindPrev ? window.__devopticFindPrev() : { matches: 0, current: 0 };
+      });
+      socket.emit('browser:find:result', result);
+      session.ghostDOMDirty = true;
+    } catch (err) { }
+  });
+
+  socket.on('browser:find:clear', async (data) => {
+    if (data.sessionId !== sessionId) return;
+    const session = browserSessions.get(sessionId);
+    if (!session || !session.page) return;
+    try {
+      await session.page.evaluate(() => {
+        if (window.__devopticFindClear) window.__devopticFindClear();
+      });
+      session.ghostDOMDirty = true;
+    } catch (err) { }
+  });
+
 }
 
 async function createBrowserSession(sessionId, socket) {
@@ -445,6 +656,12 @@ async function createBrowserSession(sessionId, socket) {
   console.log(`[BrowserEngine] Creating new browser session: ${sessionId}`);
   const context = playwrightBrowser;
   const page = await context.newPage();
+
+  // Initial Page -> Go to Bing
+  try {
+    await page.goto("https://www.bing.com", { timeout: 15000 }).catch(e => console.warn("Initial nav failed:", e.message));
+  } catch (e) { }
+
   await configurePage(page, sessionId);
   attachSessionHandlers(sessionId, socket, context)
 
@@ -473,6 +690,9 @@ async function createBrowserSession(sessionId, socket) {
   browserSessions.set(sessionId, session);
 
   await setupPrivacyMonitor(sessionId, page);
+  // Inject Find Helper
+  await safeInjectScript(page, FIND_HELPER_SCRIPT);
+
   if (!session._pageListenerAttached) {
     session._pageListenerAttached = true;
 
@@ -559,6 +779,9 @@ async function createBrowserSession(sessionId, socket) {
       timestamp: Date.now()
     });
   });
+
+
+
 
   // --- DEVTOOLS: Network Request Monitoring ---
   page.on('request', (request) => {
@@ -687,10 +910,17 @@ async function navigateSession(sessionId, url) {
         return iconLink.href;
       }
       return new URL('/favicon.ico', window.location.origin).href;
+      return new URL('/favicon.ico', window.location.origin).href;
     });
   } catch (e) {
     favicon = null;
   }
+
+  // -- DEVOPTIC CHANGE: Record History on Navigation --
+  if (title && currentUrl) {
+    HistoryManager.addEntry(sessionId, currentUrl, title, favicon);
+  }
+  // --------------------------------------------------
 
   return { page: session.page, url: currentUrl, title, favicon };
 }
@@ -1448,8 +1678,10 @@ io.on('connection', (socket) => {
     const authorizedController = sessionState[data.sessionId]?.controllerSocketId;
     const hasBrowserSession = browserSessions.has(data.sessionId);
 
-    // Allow input ONLY if user has explicit control grant
-    if (socket.id === authorizedController) {
+    // Allow input if:
+    // 1. User has explicit control grant
+    // 2. OR This is a Server Browser session (hasBrowserSession) AND no one has exclusive control (Open/Collaborative by default)
+    if (socket.id === authorizedController || (hasBrowserSession && !authorizedController)) {
       if (hasBrowserSession) {
         await executeInput(data.sessionId, data);
       }

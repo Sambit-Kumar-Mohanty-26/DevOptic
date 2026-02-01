@@ -1,3 +1,15 @@
-2026/01/30-05:05:23.955 4524 Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\IndexedDB\https_www.bing.com_0.indexeddb.leveldb/MANIFEST-000001
-2026/01/30-05:05:23.988 4524 Recovering log #4
-2026/01/30-05:05:23.989 4524 Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\IndexedDB\https_www.bing.com_0.indexeddb.leveldb/000004.log 
+2026/02/01-06:13:55.692 263c Reusing MANIFEST C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\IndexedDB\https_www.bing.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/02/01-06:13:55.693 263c Recovering log #4
+2026/02/01-06:13:55.695 263c Reusing old log C:\Users\HP\Desktop\devoptic\server\chrome_data\Default\IndexedDB\https_www.bing.com_0.indexeddb.leveldb/000004.log 
+2026/02/01-06:14:59.632 5408 Level-0 table #8: started
+2026/02/01-06:14:59.688 5408 Level-0 table #8: 84240 bytes OK
+2026/02/01-06:14:59.691 5408 Delete type=0 #4
+2026/02/01-06:14:59.692 5408 Manual compaction at level-0 from (begin) .. (end); will stop at (end)
+2026/02/01-06:14:59.700 5408 Manual compaction at level-1 from (begin) .. (end); will stop at '\x00\x01\x01\x03\x01\x08\x002\x000\x002\x006\x000\x002\x000\x008' @ 881 : 1
+2026/02/01-06:14:59.700 5408 Compacting 1@1 + 1@2 files
+2026/02/01-06:14:59.712 5408 Generated table #9@1: 45 keys, 13112 bytes
+2026/02/01-06:14:59.712 5408 Compacted 1@1 + 1@2 files => 13112 bytes
+2026/02/01-06:14:59.713 5408 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/02/01-06:14:59.714 5408 Delete type=2 #5
+2026/02/01-06:14:59.714 5408 Delete type=2 #8
+2026/02/01-06:14:59.716 5408 Manual compaction at level-1 from '\x00\x01\x01\x03\x01\x08\x002\x000\x002\x006\x000\x002\x000\x008' @ 881 : 1 .. (end); will stop at (end)
