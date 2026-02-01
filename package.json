@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "server": "node server/index.js",
+    "build:render": "prisma generate && npx playwright install chromium && next build",
     "postinstall": "prisma generate && npx playwright install chromium"
   },
   "dependencies": {

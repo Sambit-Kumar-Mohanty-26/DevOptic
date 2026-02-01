@@ -384,13 +384,14 @@ export const ScreenShareHost = ({
                 // Draw frame to canvas
                 ctx.drawImage(img, 0, 0);
 
-                // Update video element with canvas stream
                 if (!videoRef.current!.srcObject) {
                     const stream = canvas.captureStream(30);
                     videoRef.current!.srcObject = stream;
-                    setStatus("streaming");
                     setResolution({ width: data.frame.width, height: data.frame.height });
                 }
+
+                // Always ensure we are in streaming state if receiving frames
+                if (status !== "streaming") setStatus("streaming");
 
                 // Clean up object URL
                 if (objectUrl) {
@@ -484,7 +485,8 @@ export const ScreenShareHost = ({
             if (document.visibilityState === 'visible') {
                 console.log("[ServerBrowser] Tab visible, resuming stream...");
                 socket.emit("browser:stream:resume", { sessionId });
-                setStatus("connecting");
+                // Do NOT set status to connecting here, to avoid flash/stuck overlay
+                // If stream was dead, the next frame will confirm streaming
             }
         };
 
