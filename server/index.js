@@ -1751,6 +1751,18 @@ io.on('connection', (socket) => {
     socket.to(data.sessionId).emit('mode:switch', data);
   });
 
+  //IFRAME URL SYNC (Host <-> Guest)
+  socket.on('url:sync', (data) => {
+    console.log(`[URL SYNC] User ${socket.id} changed URL to ${data.url} in session ${data.sessionId}`);
+    socket.to(data.sessionId).emit('url:sync', data);
+  });
+
+  //PIXEL SUB-MODE SYNC (overlay <-> whiteboard)
+  socket.on('pixelSubMode:sync', (data) => {
+    console.log(`[SUBMODE] User ${socket.id} switched to ${data.subMode} in session ${data.sessionId}`);
+    socket.to(data.sessionId).emit('pixelSubMode:sync', data);
+  });
+
   // Resume streaming (e.g. after tab switch)
   socket.on('browser:stream:resume', (data) => {
     startStreaming(data.sessionId);

@@ -476,6 +476,23 @@ export default function LiveWorkspace({ params }: PageProps) {
           }
         });
 
+        //IFRAME URL SYNC
+        socket.on('url:sync', (data: { url: string; userId: string }) => {
+          if (data.userId === socket.id) return;
+          console.log(`[URL SYNC] Received URL: ${data.url}`);
+          setTargetUrl(data.url);
+          setInputUrl(data.url);
+          toast.info('URL synced from other user', { icon: '🔗', duration: 2000 });
+        });
+
+        //PIXEL SUB-MODE SYNC (overlay <-> whiteboard)
+        socket.on('pixelSubMode:sync', (data: { subMode: 'overlay' | 'whiteboard'; userId: string }) => {
+          if (data.userId === socket.id) return;
+          console.log(`[SUBMODE] Received subMode: ${data.subMode}`);
+          setPixelSubMode(data.subMode);
+          toast.info(`Synced to ${data.subMode} mode`, { icon: data.subMode === 'whiteboard' ? '📋' : '🪟', duration: 2000 });
+        });
+
         socket.on('browser:navigated', (data: { url: string }) => {
           console.log('[ServerBrowser] Navigated to:', data.url);
           setIsServerBrowserConnected(true);
@@ -1225,6 +1242,13 @@ export default function LiveWorkspace({ params }: PageProps) {
     if (!/^https?:\/\//i.test(inputUrl)) formattedUrl = 'https://' + inputUrl;
     setTargetUrl(formattedUrl);
     setInputUrl(formattedUrl);
+
+    // Emit URL sync to other users
+    socketRef.current?.emit('url:sync', {
+      sessionId,
+      url: formattedUrl,
+      userId: socketRef.current?.id
+    });
   };
 
   const handleRefresh = () => {
@@ -1425,10 +1449,24 @@ export default function LiveWorkspace({ params }: PageProps) {
               className="absolute left-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-4"
             >
               <div className="bg-slate-900/95 backdrop-blur-2xl border border-white/10 p-1 rounded-2xl shadow-2xl grid grid-cols-2 gap-1 w-18">
-                <button onClick={() => setPixelSubMode("overlay")} className={`aspect-square rounded-xl flex items-center justify-center transition-all relative group ${pixelSubMode === 'overlay' ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                <button onClick={() => {
+                  setPixelSubMode("overlay");
+                  socketRef.current?.emit('pixelSubMode:sync', {
+                    sessionId,
+                    subMode: 'overlay',
+                    userId: socketRef.current?.id
+                  });
+                }} className={`aspect-square rounded-xl flex items-center justify-center transition-all relative group ${pixelSubMode === 'overlay' ? 'bg-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
                   <AppWindow size={18} />
                 </button>
-                <button onClick={() => setPixelSubMode("whiteboard")} className={`aspect-square rounded-xl flex items-center justify-center transition-all relative group ${pixelSubMode === 'whiteboard' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                <button onClick={() => {
+                  setPixelSubMode("whiteboard");
+                  socketRef.current?.emit('pixelSubMode:sync', {
+                    sessionId,
+                    subMode: 'whiteboard',
+                    userId: socketRef.current?.id
+                  });
+                }} className={`aspect-square rounded-xl flex items-center justify-center transition-all relative group ${pixelSubMode === 'whiteboard' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
                   <Grid3x3 size={18} />
                 </button>
               </div>
@@ -1520,6 +1558,13 @@ export default function LiveWorkspace({ params }: PageProps) {
                           let url = inputUrl;
                           if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
                           setTargetUrl(url);
+
+                          // Emit URL sync to other users
+                          socketRef.current?.emit('url:sync', {
+                            sessionId,
+                            url: url,
+                            userId: socketRef.current?.id
+                          });
                         }
                       }}
                       className="flex items-center bg-black/40 border border-white/10 rounded-full px-3 py-1 w-64 focus-within:w-80 transition-all hover:bg-black/60 focus-within:border-cyan-500/50"
