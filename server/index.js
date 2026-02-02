@@ -1763,6 +1763,12 @@ io.on('connection', (socket) => {
     socket.to(data.sessionId).emit('pixelSubMode:sync', data);
   });
 
+  //SERVER MODE SYNC (iframe <-> server browser)
+  socket.on('serverMode:sync', (data) => {
+    console.log(`[SERVER MODE] User ${socket.id} switched server mode to ${data.enabled} in session ${data.sessionId}`);
+    socket.to(data.sessionId).emit('serverMode:sync', data);
+  });
+
   // Resume streaming (e.g. after tab switch)
   socket.on('browser:stream:resume', (data) => {
     startStreaming(data.sessionId);

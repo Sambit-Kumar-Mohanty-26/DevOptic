@@ -493,6 +493,21 @@ export default function LiveWorkspace({ params }: PageProps) {
           toast.info(`Synced to ${data.subMode} mode`, { icon: data.subMode === 'whiteboard' ? '📋' : '🪟', duration: 2000 });
         });
 
+        //SERVER MODE SYNC (iframe <-> server browser)
+        socket.on('serverMode:sync', (data: { enabled: boolean; url?: string; userId: string }) => {
+          if (data.userId === socket.id) return;
+          console.log(`[SERVER MODE] Received server mode: ${data.enabled}`);
+          setIsServerBrowserMode(data.enabled);
+          if (data.url) {
+            setServerBrowserUrl(data.url);
+          }
+          if (data.enabled) {
+            toast.info('Server Browser Mode synced', { icon: '🖥️', duration: 2000 });
+          } else {
+            toast.info('Switched to iframe mode', { icon: '🪟', duration: 2000 });
+          }
+        });
+
         socket.on('browser:navigated', (data: { url: string }) => {
           console.log('[ServerBrowser] Navigated to:', data.url);
           setIsServerBrowserConnected(true);
@@ -1589,6 +1604,14 @@ export default function LiveWorkspace({ params }: PageProps) {
                       if (newMode) {
                         socketRef.current?.emit('browser:create', { sessionId });
                       }
+
+                      // Emit server mode sync to other users
+                      socketRef.current?.emit('serverMode:sync', {
+                        sessionId,
+                        enabled: newMode,
+                        url: serverBrowserUrl || targetUrl,
+                        userId: socketRef.current?.id
+                      });
                     }}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md border transition-all ${isServerBrowserMode
                       ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20'
@@ -1701,7 +1724,8 @@ export default function LiveWorkspace({ params }: PageProps) {
                   onLoad={() => setIsLoading(false)} />
               )}
 
-              {role === 'host' && (mode === 'debug' || (mode === 'pixel' && isServerBrowserMode)) && (
+              {/* Server Browser / Screen Share Host - Show for anyone when server browser mode is enabled */}
+              {isServerBrowserMode ? (
                 <div className="absolute inset-0 z-10">
                   <ScreenShareHost
                     sessionId={sessionId}
@@ -1712,7 +1736,7 @@ export default function LiveWorkspace({ params }: PageProps) {
                     onInspectElement={(el) => setInspectedElement(el)}
                   />
                 </div>
-              )}
+              ) : null}
 
               <AnimatePresence>
                 {isLoading && pixelSubMode === 'overlay' && (
