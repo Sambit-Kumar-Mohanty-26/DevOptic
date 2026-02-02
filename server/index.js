@@ -8,6 +8,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { chromium } from 'playwright-extra';
 import stealthPlugin from 'puppeteer-extra-plugin-stealth';
+import os from 'os';
+import fs from 'fs';
 
 chromium.use(stealthPlugin());
 
@@ -230,8 +232,8 @@ async function initializeBrowser() {
 
   console.log('[BrowserEngine] Initializing Playwright browser (Persistent Profile)...');
 
-  // We use a persistent profile directory to accumulate "trust" score with Google
-  const userDataDir = path.join(process.cwd(), 'chrome_data');
+  // We use a temporary directory to avoid storing data locally in the project
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'devoptic-chrome-'));
 
   try {
     playwrightBrowser = await chromium.launchPersistentContext(userDataDir, {
