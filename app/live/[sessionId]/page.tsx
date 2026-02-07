@@ -86,6 +86,7 @@ export default function LiveWorkspace({ params }: PageProps) {
   const [tabs, setTabs] = useState<any[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
   const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
+  const [isGuestSharing, setIsGuestSharing] = useState(false);
 
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -206,6 +207,16 @@ export default function LiveWorkspace({ params }: PageProps) {
         socket.emit("join-session", sessionId);
         console.log(`[LOG] Connected to socket, joined ${sessionId}`);
 
+        // Track guest screen sharing status
+        socket.on("webrtc:offer", () => {
+          console.log("[ScreenShare] Guest started sharing screen");
+          setIsGuestSharing(true);
+        });
+
+        socket.on("webrtc:stop", () => {
+          console.log("[ScreenShare] Guest stopped sharing screen");
+          setIsGuestSharing(false);
+        });
 
         socket.on("cursor:down", ({ id, color, size, x, y }) => {
           const canvas = fabricCanvas.current;
@@ -764,6 +775,25 @@ export default function LiveWorkspace({ params }: PageProps) {
       canvas.selection = false;
       canvas.defaultCursor = "crosshair";
 
+      // Hover handler for server browser mode - sends coordinates to server for element detection
+      let lastHoverTime = 0;
+      canvas.on("mouse:move", (o) => {
+        if (!isServerBrowserMode) return;
+
+        const now = Date.now();
+        if (now - lastHoverTime < 50) return;
+        lastHoverTime = now;
+
+        const pointer = canvas.getScenePoint(o.e);
+        console.log("[MagicHover] Canvas move at", pointer.x, pointer.y);
+
+        socketRef.current?.emit("magic:hover:server", {
+          sessionId,
+          x: pointer.x,
+          y: pointer.y
+        });
+      });
+
       canvas.on("mouse:down", (o) => {
         const pointer = canvas.getScenePoint(o.e);
         const w = canvas.width || 1;
@@ -771,13 +801,21 @@ export default function LiveWorkspace({ params }: PageProps) {
 
         console.log("[Magic] Click at", pointer);
 
-        socketRef.current?.emit("magic:select", {
-          sessionId,
-          x: pointer.x,
-          y: pointer.y,
-          normalizedX: pointer.x / w,
-          normalizedY: pointer.y / h
-        });
+        if (isServerBrowserMode) {
+          socketRef.current?.emit("magic:select:server", {
+            sessionId,
+            x: pointer.x,
+            y: pointer.y
+          });
+        } else {
+          socketRef.current?.emit("magic:select", {
+            sessionId,
+            x: pointer.x,
+            y: pointer.y,
+            normalizedX: pointer.x / w,
+            normalizedY: pointer.y / h
+          });
+        }
       });
     }
 
@@ -1087,7 +1125,7 @@ export default function LiveWorkspace({ params }: PageProps) {
         }, 100);
       });
     }
-  }, [activeTool, activeColor, brushSize, sessionId]);
+  }, [activeTool, activeColor, brushSize, sessionId, isServerBrowserMode]);
 
   // --- MAGIC BRUSH LOGIC ---
   useEffect(() => {
@@ -1716,7 +1754,8 @@ export default function LiveWorkspace({ params }: PageProps) {
                 />
               )}
 
-              {(pixelSubMode === 'overlay' || mode === 'debug') && !isServerBrowserMode && (
+              {/* Iframe - Show for guest OR for host when guest is NOT sharing (and not in server browser mode) */}
+              {(pixelSubMode === 'overlay' || mode === 'debug') && !isServerBrowserMode && !(role === 'host' && isGuestSharing) && (
                 <iframe key={`${targetUrl}-${refreshKey}`}
                   src={`/api/proxy?url=${encodeURIComponent(targetUrl)}`}
                   className="w-full h-full border-none absolute inset-0 z-10"
@@ -1724,8 +1763,8 @@ export default function LiveWorkspace({ params }: PageProps) {
                   onLoad={() => setIsLoading(false)} />
               )}
 
-              {/* Server Browser / Screen Share Host - Show for anyone when server browser mode is enabled */}
-              {isServerBrowserMode ? (
+              {/* Screen Share Host - Show for server browser mode OR when host needs to see guest's screen */}
+              {(isServerBrowserMode || (role === 'host' && isGuestSharing)) && (
                 <div className="absolute inset-0 z-10">
                   <ScreenShareHost
                     sessionId={sessionId}
@@ -1736,7 +1775,69 @@ export default function LiveWorkspace({ params }: PageProps) {
                     onInspectElement={(el) => setInspectedElement(el)}
                   />
                 </div>
-              ) : null}
+              )}
+
+              {/* Waiting for Guest Overlay - Show for host when guest is not sharing and not in server browser mode */}
+              {role === 'host' && !isServerBrowserMode && !isGuestSharing && mode === 'debug' && (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-900/95 backdrop-blur-sm">
+                  <div className="w-16 h-16 border-4 border-violet-500/20 rounded-full border-t-violet-500 animate-spin mb-4" />
+                  <p className="text-slate-400 text-sm font-medium">Waiting for Guest Stream...</p>
+                  <p className="text-slate-600 text-xs mt-2">Guest will share their screen when they join</p>
+                </div>
+              )}
+
+
+              {/* Magic Wand Hover Overlay - HIGHEST Z-INDEX - captures mouse events for element detection */}
+              {isServerBrowserMode && activeTool === 'magic' && (
+                <div
+                  className="absolute inset-0 z-40 cursor-crosshair"
+                  style={{ pointerEvents: 'auto' }}
+                  onMouseMove={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const relX = e.clientX - rect.left;
+                    const relY = e.clientY - rect.top;
+
+                    // Scale from overlay size to headless browser viewport (1920x1080)
+                    const scaleX = 1920 / rect.width;
+                    const scaleY = 1080 / rect.height;
+                    const x = Math.round(relX * scaleX);
+                    const y = Math.round(relY * scaleY);
+
+                    // Throttle hover events
+                    const now = Date.now();
+                    if (now - (window as any).__lastMagicHover < 50) return;
+                    (window as any).__lastMagicHover = now;
+
+                    console.log('[MagicOverlay] Hover at scaled:', x, y, '(raw:', relX, relY, ')');
+                    socketRef.current?.emit('magic:hover:server', {
+                      sessionId,
+                      x: x,
+                      y: y
+                    });
+                  }}
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const relX = e.clientX - rect.left;
+                    const relY = e.clientY - rect.top;
+
+                    // Scale from overlay size to headless browser viewport (1920x1080)
+                    const scaleX = 1920 / rect.width;
+                    const scaleY = 1080 / rect.height;
+                    const x = Math.round(relX * scaleX);
+                    const y = Math.round(relY * scaleY);
+
+                    console.log('[MagicOverlay] Click at scaled:', x, y);
+                    socketRef.current?.emit('magic:select:server', {
+                      sessionId,
+                      x: x,
+                      y: y
+                    });
+                  }}
+                  onMouseLeave={() => {
+                    socketRef.current?.emit('magic:hover:clear', { sessionId });
+                  }}
+                />
+              )}
 
               <AnimatePresence>
                 {isLoading && pixelSubMode === 'overlay' && (

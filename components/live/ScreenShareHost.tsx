@@ -48,7 +48,14 @@ export const ScreenShareHost = ({
 
     const [ghostDOMData, setGhostDOMData] = useState<ElementMetadata[]>([]);
     const [serverBrowserUrl, setServerBrowserUrl] = useState("");
+    const [hoverHighlight, setHoverHighlight] = useState<{
+        rect: { x: number; y: number; width: number; height: number };
+        tagName: string;
+        idAttr?: string;
+        classes?: string;
+    } | null>(null);
     const frameRequestRef = useRef<NodeJS.Timeout | null>(null);
+    const hoverThrottleRef = useRef<number>(0);
 
     const cleanup = useCallback(() => {
         if (peerConnectionRef.current) {
@@ -173,13 +180,22 @@ export const ScreenShareHost = ({
 
         if (activeTool === 'magic') {
             console.log("[Inspector] Triggering inspection at", coords.x, coords.y);
-            socket?.emit("magic:select", {
-                sessionId,
-                x: coords.x,
-                y: coords.y,
-                normalizedX: coords.x / (videoRef.current?.videoWidth || 1),
-                normalizedY: coords.y / (videoRef.current?.videoHeight || 1)
-            });
+
+            if (isServerBrowserMode) {
+                socket?.emit("magic:select:server", {
+                    sessionId,
+                    x: coords.x,
+                    y: coords.y
+                });
+            } else {
+                socket?.emit("magic:select", {
+                    sessionId,
+                    x: coords.x,
+                    y: coords.y,
+                    normalizedX: coords.x / (videoRef.current?.videoWidth || 1),
+                    normalizedY: coords.y / (videoRef.current?.videoHeight || 1)
+                });
+            }
         } else {
             sendCursorEvent("click", coords.x, coords.y, { button: e.button });
         }
@@ -219,14 +235,29 @@ export const ScreenShareHost = ({
     }, [hasControl, sendCursorEvent, isServerBrowserMode]);
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
-        const canInteract = isServerBrowserMode || hasControl;
+        const canInteract = isServerBrowserMode || hasControl || activeTool === 'magic';
         if (!canInteract) return;
         const coords = calculateVideoCoordinates(e);
         if (coords) {
             lastCursorPos.current = { x: coords.x, y: coords.y };
-            sendCursorEvent("move", coords.x, coords.y);
+
+            // For magic wand tool, emit hover event for element detection
+            if (activeTool === 'magic' && isServerBrowserMode) {
+                const now = Date.now();
+                if (now - hoverThrottleRef.current > 50) {
+                    hoverThrottleRef.current = now;
+                    console.log('[MagicWand] Emitting hover:', coords.x, coords.y, 'activeTool:', activeTool, 'serverMode:', isServerBrowserMode);
+                    socket?.emit('magic:hover:server', {
+                        sessionId,
+                        x: coords.x,
+                        y: coords.y
+                    });
+                }
+            } else if (isServerBrowserMode || hasControl) {
+                sendCursorEvent("move", coords.x, coords.y);
+            }
         }
-    }, [hasControl, sendCursorEvent, isServerBrowserMode]);
+    }, [hasControl, sendCursorEvent, isServerBrowserMode, activeTool, socket, sessionId]);
 
     // --- Wheel Event Handler ---
     useEffect(() => {
@@ -464,12 +495,18 @@ export const ScreenShareHost = ({
         socket.on("browser:stream:started", handleStreamStarted);
         socket.on("browser:download", handleDownload);
 
+        const handleHoverResult = (data: { rect: { x: number; y: number; width: number; height: number }; tagName: string; idAttr?: string; classes?: string }) => {
+            setHoverHighlight(data);
+        };
+        socket.on("magic:hover:result", handleHoverResult);
+
         return () => {
             socket.off("browser:frame:data", handleFrameData);
             socket.off("browser:ghostdom:data", handleGhostDOMData);
             socket.off("browser:navigated", handleNavigated);
             socket.off("browser:stream:started", handleStreamStarted);
             socket.off("browser:download", handleDownload);
+            socket.off("magic:hover:result", handleHoverResult);
 
             // Stop streaming on unmount
             socket.emit("browser:stream:stop", { sessionId });
@@ -495,6 +532,25 @@ export const ScreenShareHost = ({
             document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
     }, [isServerBrowserMode, socket, sessionId]);
+
+    //Request GhostDOM when Magic Wand tool is activated
+    useEffect(() => {
+        if (!isServerBrowserMode || !socket || activeTool !== 'magic') return;
+
+        console.log("[ServerBrowser] Magic wand activated, requesting GhostDOM data...");
+        socket.emit("browser:ghostdom", { sessionId });
+
+        // Set up periodic refresh while magic wand is active
+        const refreshInterval = setInterval(() => {
+            socket.emit("browser:ghostdom", { sessionId });
+        }, 500);
+
+        return () => {
+            clearInterval(refreshInterval);
+            // Clear the in-page highlight when magic wand is deactivated
+            socket.emit("magic:hover:clear", { sessionId });
+        };
+    }, [isServerBrowserMode, socket, sessionId, activeTool]);
 
     // --- WebRTC Connection Setup ---
     useEffect(() => {
@@ -691,17 +747,7 @@ export const ScreenShareHost = ({
                 tabIndex={isServerBrowserMode ? 0 : -1}
             />
 
-            {/* Ghost DOM Overlay for Server Browser Mode */}
-            {isServerBrowserMode && status === "streaming" && activeTool === 'magic' && (
-                <GhostDOMOverlay
-                    elements={ghostDOMData}
-                    videoRef={videoRef}
-                    isActive={true}
-                    onHover={handleGhostDOMHover}
-                    onClick={handleGhostDOMClick}
-                    showCursor={true}
-                />
-            )}
+            {/* NOTE: Magic Wand highlight is injected by server into headless browser page - shows in video stream */}
 
             {/* DevTools Panel */}
             {isServerBrowserMode && (

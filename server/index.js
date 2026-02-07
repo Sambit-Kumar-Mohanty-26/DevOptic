@@ -15,6 +15,7 @@ chromium.use(stealthPlugin());
 
 import { HistoryManager } from './browser/HistoryManager.js';
 import { BookmarkManager } from './browser/BookmarkManager.js';
+import { inspectAtPoint, highlightAtPoint, clearHighlight } from './browser/MagicSelect.js';
 
 // --- Find in Page Helper Script ---
 // Matches text nodes and highlights them
@@ -1701,6 +1702,165 @@ io.on('connection', (socket) => {
 
   socket.on('magic:select', (data) => socket.to(data.sessionId).emit('magic:select', data));
   socket.on('dom:inspected', (data) => socket.to(data.sessionId).emit('dom:inspected', data));
+
+  // --- MAGIC SELECT FOR SERVER BROWSER ---
+  socket.on('magic:select:server', async (data) => {
+    const session = browserSessions.get(data.sessionId);
+    if (!session || !session.page) {
+      console.warn(`[MagicSelect] No browser session for ${data.sessionId}`);
+      return;
+    }
+
+    try {
+      console.log(`[MagicSelect] Inspecting at (${data.x}, ${data.y}) in session ${data.sessionId}`);
+
+      // Highlight the element first
+      const highlightRect = await highlightAtPoint(session.page, data.x, data.y);
+      if (highlightRect) {
+        io.to(data.sessionId).emit('magic:highlight', {
+          sessionId: data.sessionId,
+          rect: highlightRect
+        });
+      }
+
+      // Inspect the element
+      const elementData = await inspectAtPoint(session.page, data.x, data.y);
+      if (elementData) {
+        console.log(`[MagicSelect] Found element: ${elementData.tagName}#${elementData.idAttr || elementData.id}`);
+        io.to(data.sessionId).emit('dom:inspected', elementData);
+      } else {
+        console.warn(`[MagicSelect] No element found at (${data.x}, ${data.y})`);
+      }
+    } catch (err) {
+      console.error(`[MagicSelect] Error: ${err.message}`);
+    }
+  });
+
+  // --- MAGIC CLEAR FOR SERVER BROWSER ---
+  socket.on('magic:clear:server', async (data) => {
+    const session = browserSessions.get(data.sessionId);
+    if (session && session.page) {
+      await clearHighlight(session.page);
+    }
+  });
+
+  // --- MAGIC HOVER FOR SERVER BROWSER (Real-time element detection + IN-PAGE HIGHLIGHT) ---
+  socket.on('magic:hover:server', async (data) => {
+    console.log('[MagicHover] Received event:', data.sessionId, 'x:', data.x, 'y:', data.y);
+    const session = browserSessions.get(data.sessionId);
+    if (!session || !session.page) {
+      console.log('[MagicHover] No session or page found for:', data.sessionId);
+      return;
+    }
+
+    try {
+      // This injects a highlight DIRECTLY into the page, which appears in the video stream!
+      const elementInfo = await session.page.evaluate(({ x, y }) => {
+        // Remove previous highlight
+        let overlay = document.getElementById('devoptic-magic-hover');
+        if (!overlay) {
+          overlay = document.createElement('div');
+          overlay.id = 'devoptic-magic-hover';
+          overlay.style.cssText = `
+            position: fixed;
+            pointer-events: none;
+            z-index: 2147483647;
+            border: 3px solid #ec4899;
+            background: rgba(236, 72, 153, 0.15);
+            box-shadow: 0 0 20px rgba(236, 72, 153, 0.4), inset 0 0 20px rgba(236, 72, 153, 0.1);
+            transition: all 0.1s ease-out;
+          `;
+          document.body.appendChild(overlay);
+
+          // Create label element
+          const label = document.createElement('div');
+          label.id = 'devoptic-magic-label';
+          label.style.cssText = `
+            position: fixed;
+            pointer-events: none;
+            z-index: 2147483647;
+            background: linear-gradient(135deg, #ec4899, #8b5cf6);
+            color: white;
+            font-family: ui-monospace, monospace;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 4px 8px;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            white-space: nowrap;
+            transition: all 0.1s ease-out;
+          `;
+          document.body.appendChild(label);
+        }
+
+        const label = document.getElementById('devoptic-magic-label');
+
+        const el = document.elementFromPoint(x, y);
+        if (!el) {
+          overlay.style.display = 'none';
+          if (label) label.style.display = 'none';
+          return null;
+        }
+
+        const r = el.getBoundingClientRect();
+
+        // Update overlay position
+        overlay.style.display = 'block';
+        overlay.style.top = r.top + 'px';
+        overlay.style.left = r.left + 'px';
+        overlay.style.width = r.width + 'px';
+        overlay.style.height = r.height + 'px';
+
+        // Update label
+        if (label) {
+          label.style.display = 'block';
+          label.style.top = Math.max(0, r.top - 28) + 'px';
+          label.style.left = r.left + 'px';
+
+          let text = el.tagName.toLowerCase();
+          if (el.id) text += '#' + el.id;
+          else if (el.className && typeof el.className === 'string') {
+            const firstClass = el.className.split(' ')[0];
+            if (firstClass) text += '.' + firstClass;
+          }
+          label.textContent = text;
+        }
+
+        return {
+          rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+          tagName: el.tagName.toLowerCase(),
+          idAttr: el.id || '',
+          classes: el.className?.toString() || ''
+        };
+      }, { x: data.x, y: data.y });
+
+      if (elementInfo) {
+        socket.emit('magic:hover:result', {
+          sessionId: data.sessionId,
+          ...elementInfo
+        });
+      }
+    } catch (err) {
+      // Silently ignore errors during hover
+    }
+  });
+
+  // --- MAGIC HOVER CLEAR (remove highlight from page) ---
+  socket.on('magic:hover:clear', async (data) => {
+    const session = browserSessions.get(data.sessionId);
+    if (!session || !session.page) return;
+
+    try {
+      await session.page.evaluate(() => {
+        const overlay = document.getElementById('devoptic-magic-hover');
+        const label = document.getElementById('devoptic-magic-label');
+        if (overlay) overlay.remove();
+        if (label) label.remove();
+      });
+    } catch (err) {
+      // Ignore
+    }
+  });
 
   // Apply style via headless browser
   socket.on('dom:apply', async (data) => {
