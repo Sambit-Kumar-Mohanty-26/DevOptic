@@ -1773,6 +1773,7 @@ export default function LiveWorkspace({ params }: PageProps) {
                     activeTool={activeTool}
                     isServerBrowserMode={isServerBrowserMode}
                     onInspectElement={(el) => setInspectedElement(el)}
+                    role={role}
                   />
                 </div>
               )}
@@ -1848,9 +1849,9 @@ export default function LiveWorkspace({ params }: PageProps) {
                 )}
               </AnimatePresence>
 
-              {/* Privacy Overlay */}
+              {/* Privacy Overlay - Only shown to hosts, not guests */}
               {isServerBrowserMode && (
-                <PrivacyOverlay sessionId={sessionId} socket={socketRef.current} />
+                <PrivacyOverlay sessionId={sessionId} socket={socketRef.current} role={role} />
               )}
 
 

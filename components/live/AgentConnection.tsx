@@ -117,10 +117,15 @@ export const AgentConnection = ({ sessionId, socket }: AgentConnectionProps) => 
                             <button
                                 onClick={() => {
                                     navigator.clipboard.writeText(`node agent.js ${sessionId}`);
+                                    setCopied(true);
+                                    setTimeout(() => setCopied(false), 2000);
                                 }}
-                                className="absolute right-2 top-2 bg-white/10 hover:bg-white/20 text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                className={`absolute right-2 top-2 text-[10px] px-2 py-1 rounded transition-all ${copied
+                                        ? "bg-emerald-500 text-white"
+                                        : "bg-white/10 hover:bg-white/20 text-white opacity-0 group-hover:opacity-100"
+                                    }`}
                             >
-                                Copy
+                                {copied ? "Copied!" : "Copy"}
                             </button>
                         </div>
 

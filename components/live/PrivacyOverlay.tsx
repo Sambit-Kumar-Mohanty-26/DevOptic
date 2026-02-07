@@ -7,9 +7,10 @@ import type { Socket } from "socket.io-client";
 interface PrivacyOverlayProps {
     sessionId: string;
     socket: Socket | null;
+    role?: 'host' | 'guest' | null;
 }
 
-export const PrivacyOverlay = ({ sessionId, socket }: PrivacyOverlayProps) => {
+export const PrivacyOverlay = ({ sessionId, socket, role }: PrivacyOverlayProps) => {
     const [isPrivacyMode, setIsPrivacyMode] = useState(false);
 
     useEffect(() => {
@@ -23,7 +24,8 @@ export const PrivacyOverlay = ({ sessionId, socket }: PrivacyOverlayProps) => {
         return () => { socket.off("privacy:sync", handlePrivacySync); };
     }, [socket]);
 
-    if (!isPrivacyMode) return null;
+    // Only show overlay for hosts (viewers), not for guests (who are typing)
+    if (!isPrivacyMode || role === 'guest') return null;
 
     return (
         <div className="absolute inset-0 z-[100] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-200">

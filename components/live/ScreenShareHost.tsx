@@ -14,6 +14,7 @@ interface ScreenShareHostProps {
     activeTool?: string;
     isServerBrowserMode?: boolean;
     onInspectElement?: (element: any) => void;
+    role?: 'host' | 'guest' | null;
 }
 
 const rtcConfig: RTCConfiguration = {
@@ -29,7 +30,8 @@ export const ScreenShareHost = ({
     hasControl = false,
     activeTool = "select",
     isServerBrowserMode = false,
-    onInspectElement
+    onInspectElement,
+    role = null
 }: ScreenShareHostProps) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -708,8 +710,8 @@ export const ScreenShareHost = ({
                 </div>
             )}
 
-            {/* Privacy Mode Overlay */}
-            {privacyMode && (
+            {/* Privacy Mode Overlay - Only show for hosts (viewers), not guests (who are typing) */}
+            {privacyMode && role !== 'guest' && (
                 <div className="absolute inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center border border-red-500/20 m-1 rounded-xl">
                     <div className="bg-red-500/10 p-4 rounded-full mb-4 animate-pulse">
                         <ShieldAlert size={48} className="text-red-500" />
