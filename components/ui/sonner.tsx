@@ -32,6 +32,17 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }
+      toastOptions={{
+        classNames: {
+          toast:
+            "group toast group-[.toaster]:bg-slate-950 group-[.toaster]:text-slate-50 group-[.toaster]:border-white/10 group-[.toaster]:shadow-lg",
+          description: "!text-slate-400",
+          actionButton:
+            "group-[.toast]:bg-cyan-600 group-[.toast]:text-white",
+          cancelButton:
+            "group-[.toast]:bg-slate-800 group-[.toast]:text-slate-300",
+        },
+      }}
       {...props}
     />
   )

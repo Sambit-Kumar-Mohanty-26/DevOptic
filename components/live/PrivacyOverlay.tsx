@@ -28,7 +28,7 @@ export const PrivacyOverlay = ({ sessionId, socket, role }: PrivacyOverlayProps)
     if (!isPrivacyMode || role === 'guest') return null;
 
     return (
-        <div className="absolute inset-0 z-[100] bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-200">
+        <div className="absolute inset-0 z-100 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center text-center p-6 animate-in fade-in duration-200">
             <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4 border border-white/10 shadow-2xl">
                 <EyeOff size={32} className="text-slate-400" />
             </div>

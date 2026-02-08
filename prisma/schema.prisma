@@ -15,4 +15,6 @@ model LiveSession {
   hostId      String   // The Clerk User ID
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
+
+  @@index([hostId, createdAt])
 }

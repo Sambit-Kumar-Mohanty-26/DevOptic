@@ -47,7 +47,7 @@ export default function Home() {
 
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-4">
              <img 
-               src="/logo.png" 
+               src="/Logo_491_first.png" 
                alt="Logo" 
                className="w-10 h-10 object-contain mix-blend-screen" 
              />
