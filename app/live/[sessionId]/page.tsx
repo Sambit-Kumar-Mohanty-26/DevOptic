@@ -1564,7 +1564,7 @@ export default function LiveWorkspace({ params }: PageProps) {
             </div>
           )}
           <div className="w-full h-full rounded-2xl border border-white/10 shadow-2xl overflow-hidden relative flex flex-col">
-            {(pixelSubMode === 'overlay' || mode === 'debug' || isServerBrowserMode) ? (
+            {(pixelSubMode === 'overlay' || mode === 'debug' || (isServerBrowserMode && !(mode === 'pixel' && pixelSubMode === 'whiteboard'))) ? (
 
               <div className={`flex items-center px-4 gap-4 shrink-0 transition-all duration-300 z-50 ${isServerBrowserMode
                 ? 'h-11 bg-[#252526] border-b border-black/50 shadow-lg'
@@ -1764,7 +1764,7 @@ export default function LiveWorkspace({ params }: PageProps) {
               )}
 
               {/* Screen Share Host - Show for server browser mode OR when host needs to see guest's screen */}
-              {(isServerBrowserMode || (role === 'host' && isGuestSharing)) && (
+              {((isServerBrowserMode && !(mode === 'pixel' && pixelSubMode === 'whiteboard')) || (role === 'host' && isGuestSharing)) && (
                 <div className="absolute inset-0 z-10">
                   <ScreenShareHost
                     sessionId={sessionId}

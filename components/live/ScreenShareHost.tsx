@@ -733,7 +733,7 @@ export const ScreenShareHost = ({
                 className={`w-full h-full object-contain ${(hasControl || isServerBrowserMode) ? (activeTool === 'magic' ? 'cursor-crosshair' : 'cursor-none') : ''} ${privacyMode ? 'opacity-0' : 'opacity-100'}`}
                 style={{
                     opacity: status === "streaming" ? 1 : 0,
-                    cursor: isServerBrowserMode ? cursorStyle : undefined
+                    cursor: (isServerBrowserMode && !hasControl && activeTool !== 'magic') ? cursorStyle : undefined
                 }}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
