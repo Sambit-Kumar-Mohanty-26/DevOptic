@@ -137,13 +137,26 @@ export default function LiveWorkspace({ params }: PageProps) {
             const token = await getToken();
             cb({ token });
           },
+          transports: ['polling', 'websocket'],
+          upgrade: true,
           reconnection: true,
           reconnectionAttempts: Infinity,
-          reconnectionDelay: 1000,
+          reconnectionDelay: 2000,
+          reconnectionDelayMax: 5000,
+          timeout: 120000,
         });
         socketRef.current = socket;
 
+        // Show feedback if connection is slow
+        const coldStartTimer = setTimeout(() => {
+          if (!socket.connected) {
+            toast.loading("Waking up server... this may take a moment", { id: "cold-start", duration: 120000 });
+          }
+        }, 5000);
+
         socket.on("connect", () => {
+          clearTimeout(coldStartTimer);
+          toast.dismiss("cold-start");
           console.log("Socket Connected");
           setIsConnected(true);
           toast.success("Connected to server");
@@ -154,7 +167,9 @@ export default function LiveWorkspace({ params }: PageProps) {
           console.warn("Socket Disconnected:", reason);
           setIsConnected(false);
           setIsServerBrowserConnected(false);
-          toast.error("Connection lost. Reconnecting...");
+          if (reason !== "io client disconnect") {
+            toast.error("Connection lost. Reconnecting...");
+          }
         });
 
         socket.on('browser:status', (data: { active: boolean, url?: string }) => {

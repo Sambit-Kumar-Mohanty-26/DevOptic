@@ -11,12 +11,13 @@ export default function LoginPage() {
             <h1 className="text-2xl font-bold text-white tracking-widest uppercase">Access Terminal</h1>
             <p className="text-slate-500 text-xs mt-2 font-mono">IDENTIFY YOURSELF</p>
           </div>
-          <SignIn 
+          <SignIn
+            fallbackRedirectUrl="/dashboard"
             appearance={{
               elements: {
                 formButtonPrimary: "bg-blue-600 hover:bg-blue-500 text-sm normal-case rounded-sm",
                 card: "bg-transparent shadow-none p-0",
-                headerTitle: "hidden", 
+                headerTitle: "hidden",
                 headerSubtitle: "hidden",
                 socialButtonsBlockButton: "bg-slate-900 border border-slate-800 hover:bg-slate-800 text-white rounded-sm",
                 formFieldLabel: "text-slate-400 font-mono text-xs uppercase",

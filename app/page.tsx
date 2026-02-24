@@ -35,6 +35,12 @@ export default function Home() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // Pre-warm the backend server (Render free tier sleeps after inactivity)
+  useEffect(() => {
+    const backendUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
+    fetch(`${backendUrl}/health`, { mode: "no-cors" }).catch(() => { });
+  }, []);
+
   const scrollToSection = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
     e.preventDefault();
     const el = document.querySelector(href);
