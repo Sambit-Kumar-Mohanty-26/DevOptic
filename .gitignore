@@ -45,3 +45,6 @@ next-env.d.ts
 # browser data
 /chrome_data
 /server/chrome_data
+
+/PROJECT_STRUCTURE.md
+/SYSTEM_DESIGN.md
